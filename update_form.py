@@ -1,16 +1,18 @@
+import json
 import datetime
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 from google.auth.transport.requests import Request as GARequest
 
-# ---------- حساب الخدمة ----------
-SERVICE_ACCOUNT_FILE = r"C:\Users\mosha\Downloads\service_account.json"
+# تحميل بيانات الخدمة من ملف خارجي
+with open('service_account.json') as f:
+    service_account_info = json.load(f)
+
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets.readonly",
     "https://www.googleapis.com/auth/forms.body",
 ]
 
-# ---------- التهيئة (أضِف أو عدِّل هنا) ----------
 CONFIGS = [
     {
         "form_id": "12z1B1EfSX8zPKNiiqz7T6NeyCroESfYy_zvFvARMKes",
@@ -32,18 +34,14 @@ CONFIGS = [
     },
 ]
 
-# ---------- الاعتماد ----------
 def get_creds():
-    creds = Credentials.from_service_account_file(
-        SERVICE_ACCOUNT_FILE, scopes=SCOPES
+    creds = Credentials.from_service_account_info(
+        service_account_info, scopes=SCOPES
     )
     creds.refresh(GARequest())
     return creds
 
-
-# ---------- جلب القيم الفريدة من الشيت ----------
 def fetch_unique_values(creds, spreadsheet_id, sheet_range):
-    """يقرأ القيم من العمود المحدَّد متجاوزًا صفّ العناوين (الصف 1)."""
     sheets = build("sheets", "v4", credentials=creds)
     rows = (
         sheets.spreadsheets()
@@ -52,10 +50,7 @@ def fetch_unique_values(creds, spreadsheet_id, sheet_range):
         .execute()
         .get("values", [])
     )
-
-    # تخطَّ الصف الأول لأنه هيدر
     rows = rows[1:]
-
     seen, unique = set(), []
     for r in rows:
         if r and (v := r[0].strip()) and v not in seen:
@@ -63,8 +58,6 @@ def fetch_unique_values(creds, spreadsheet_id, sheet_range):
             unique.append(v)
     return unique
 
-
-# ---------- إيجاد index عنصر الـ Dropdown ----------
 def find_dropdown_index(creds, form_id, title):
     forms = build("forms", "v1", credentials=creds)
     items = forms.forms().get(formId=form_id).execute().get("items", [])
@@ -78,8 +71,6 @@ def find_dropdown_index(creds, form_id, title):
             return idx
     raise ValueError(f"Dropdown '{title}' غير موجود في النموذج {form_id}")
 
-
-# ---------- تحديث خيارات Dropdown ----------
 def update_dropdown(creds, form_id, item_index, title, options):
     forms = build("forms", "v1", credentials=creds)
     api_opts = [{"value": opt} for opt in options]
@@ -107,34 +98,4 @@ def update_dropdown(creds, form_id, item_index, title, options):
             }
         ]
     }
-    forms.forms().batchUpdate(formId=form_id, body=body).execute()
-    print(
-        f"✅ [{title}] – {form_id[:10]}… محدث بـ {len(options)} خيار"
-        f"  ({datetime.datetime.now():%Y-%m-%d %H:%M:%S})"
-    )
-
-
-# ---------- تشغيل لجميع التكوينات ----------
-def main():
-    creds = get_creds()
-    for cfg in CONFIGS:
-        opts = fetch_unique_values(
-            creds, cfg["spreadsheet_id"], cfg["sheet_range"]
-        )
-        if not opts:
-            print(f"⚠️ لا قيم في {cfg['sheet_range']}")
-            continue
-        idx = find_dropdown_index(
-            creds, cfg["form_id"], cfg["question_title"]
-        )
-        update_dropdown(
-            creds,
-            cfg["form_id"],
-            idx,
-            cfg["question_title"],
-            opts,
-        )
-
-
-if __name__ == "__main__":
-    main()
+    forms.forms(
