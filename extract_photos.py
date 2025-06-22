@@ -1,4 +1,3 @@
-import os
 import json
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
@@ -11,10 +10,20 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.options import Options
 from webdriver_manager.chrome import ChromeDriverManager
 
-# استرداد بيانات الخدمة من متغير البيئة
-service_account_info = json.loads(os.environ['SERVICE_ACCOUNT_JSON'])
+service_account_info = {
+    "type": "service_account",
+    "project_id": "hallowed-valve-343119",
+    "private_key_id": "cf66bf72c23ae29054a8b92af78d22eae1b68819",
+    "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQCqucuCHhqd/pJj\nHKANxa1TuJAEEj1yMFMhd4Yq0luapqJIEnMvEK6jZV0DSXCeAha+izo73/LWQHDn\nsU3CVVrGtpGqH1uKhnTcO2GLEmWQ8nHNn4LQKp3yYlssRwO/qWyR9ptxSYK4Xv+k\n/FvjwbHPMkl+93v3IouTWbj6zAHUBgW3xb+B+9i/zw0ehpVCBR/gp8iG0siD3pEi\ngR1qIZjVX+ObP3IL+pWHROrY/hs+QsD6yq26A1LiTgMQLAR1owUBfsyWElILXcpC\n1OsnCirG2pLZmF5q68Ohww+4oK6JWhzEb54bZnVLTIYw1IC46GzoACkD41X9OmAe\ntUIynGu7AgMBAAECggEAJtafillI2tp3+N4hNyDaPmqFMLfpjJmbv8hOGF3EgxkX\nX+f6liFoaTl9AGtrmDaHcA+CTu6ycrU0OjEmrGf4f6420wnRLGFMInHLzfSAcIoH\nA60e+DZJukNP1HHPU4G6djYwxIPhngnWhHT4foao6abZ+21XoTAVqo7FuyA/5jic\nq6/kxqumsISj89+Gqyn0EadW22dRKqg7cApUjMo8sN3I5KlJz+VTpe2yS/M+WSoa\nSlb24H00OTD+CFeObZwgBlosgv9togOMh+We6JEiL98ok8F2/FLQ5tABiJcNliuY\nOGoIckyEgP9MWHv6mSpNHgWh47ucQTPNvl/63EOxMQKBgQDsZyCSnVKkMj4KrXZp\ngA5lMkm7hS9NjMUYsPD74nQswWKj/tE2t90vHswFYyAE8m0/UQ1RBptarb1gTJOJ\nj7WmFqfzX0O08KSiuMP0uh/6HoxCXJb9bNIhkT6PIXB/jlIrgwxrTr+8zi8kPseu\nIST96rNYf5u3h/j77D05Gh28EwKBgQC44ONB1PoFsN0wPp/LsTHCMQfK/SvS+772\nHL45ezKo3G71OCZYtGgREI05BRAijJg7ry2wpCgztnEFO6lCimWtCVTMhZrmxt/8\nS6XNgQ4zl/QOiV4ffU4acD8gTa/c4gtaSg3uMjwKqNXKn2a6SyqBVutAWBcyiuPC\nfw45jC62uQKBgQDlDD6JD5kksfFe0xapvYM1FXZPFAny73OAKuAyjQTW4EA8eQYo\nKBlMMGCoz5QUdvbWpCds3CPlxfR4u3kvjWgIlmb/7MtjIs3BQ5fJJBUbeEGZgrBg\ntvEZyOp+L34aeMCwm/aKefBYdMVELve1hTOcOayvEGTFfB8Hp6riCqXItQKBgEd4\nMIJHievfRnKbEv0UX+75M1EGdAWY6maMEAF6ncfnh0Fm1nQeMci/BEkRqv4gKc2Q\n1/HcU+pB0gk62iDuDYZKAC0cTRh/syD+QXdjN5E8Yc2ozukPcL0JvW2Ier7B56+c\nxyvY4ZshT5yH6JeF7UWYy1LRew4/4PJUWbRne7uJAoGAbQeyLa4izXRf4+4d05k3\nTZsIM1ZRY6gU8pqeZqxUefWnTa315/dQMyvm60yP2vu05cxiLvKD11roUKqbQB9f\nLZLVTCozRrCYhiUsvlcJr8NH2iJm8EMETuWqWumi5LLkiFGMmvuIdGP3/pI7vx6Z\n9gKsKlDpb8hplfbgRv8BtXM=\n-----END PRIVATE KEY-----\n",
+    "client_email": "n8n-service-689@hallowed-valve-343119.iam.gserviceaccount.com",
+    "client_id": "103820270853123050546",
+    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+    "token_uri": "https://oauth2.googleapis.com/token",
+    "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+    "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/n8n-service-689@hallowed-valve-343119.iam.gserviceaccount.com",
+    "universe_domain": "googleapis.com"
+}
 
-# بقية الكود كما هو تماماً بدون أي تغيير
 scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
 creds = ServiceAccountCredentials.from_json_keyfile_dict(service_account_info, scope)
 client = gspread.authorize(creds)
@@ -40,15 +49,11 @@ col_h = [row[7] if len(row) > 7 else '' for row in data]
 
 def smart_get_image_url(link, page):
     if not link: return None
-
-    # روابط Google Drive أو صورة مباشرة
     if "drive.google.com" in link:
         match = re.search(r"/d/([^/]+)", link)
         return f"https://drive.google.com/uc?export=download&id={match.group(1)}" if match else None
     if link.lower().endswith(('.jpg', '.jpeg', '.png', '.webp', '.gif')):
         return link
-
-    # Amazon (id="landingImage")
     if "amazon." in link:
         img = page.query_selector("#landingImage")
         if img:
@@ -56,19 +61,13 @@ def smart_get_image_url(link, page):
         meta = page.query_selector('meta[property="og:image"]')
         if meta:
             return meta.get_attribute("content")
-
-    # Noon (og:image فقط لو متاحة)
     if "noon.com" in link:
         meta = page.query_selector('meta[property="og:image"]')
         if meta:
             return meta.get_attribute("content")
-    
-    # مواقع ووردبريس - og:image
     meta = page.query_selector('meta[property="og:image"]')
     if meta:
         return meta.get_attribute("content")
-    
-    # أول صورة كبيرة في الصفحة
     img = page.query_selector('img[src*=".jpg"], img[src*=".jpeg"], img[src*=".png"], img[src*=".webp"]')
     if img:
         return img.get_attribute("src")
@@ -106,17 +105,12 @@ with sync_playwright() as p:
                 failed_rows.append(idx+1)
     browser.close()
 
-# الآن نحاول على الروابط اللي فشلت باستخدام Selenium
 if failed_links:
     print("\n🚨 Trying Selenium for failed links...")
     user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
     options = Options()
-options.add_argument(f"user-agent={user_agent}")
-options.add_argument("--headless")  # مهم!
-options.add_argument("--no-sandbox")
-options.add_argument("--disable-dev-shm-usage")
-options.add_argument("--disable-gpu")  # إضافة جديدة
-options.add_argument("--disable-software-rasterizer")  # إضافة جديدة
+    options.add_argument(f"user-agent={user_agent}")
+    options.add_argument("--start-maximized")
     driver = webdriver.Chrome(service=ChromeService(ChromeDriverManager().install()), options=options)
 
     for i, link in enumerate(failed_links):
@@ -126,24 +120,20 @@ options.add_argument("--disable-software-rasterizer")  # إضافة جديدة
             driver.get(link)
             time.sleep(8)
             img_url = None
-            # جرب og:image الأول
             try:
                 og = driver.find_element(By.XPATH, '//meta[@property="og:image"]')
                 img_url = og.get_attribute("content")
                 print("OG IMAGE:", img_url)
             except:
                 pass
-            # لو مفيش og:image أو فاضي جرب صور المنتجات في الصفحة
             if not img_url or ("noon" in link and "default" in (img_url or "")):
                 try:
                     imgs = driver.find_elements(By.XPATH, '//img[contains(@src, ".jpg") or contains(@src, ".jpeg") or contains(@src, ".png")]')
                     for img in imgs:
                         src = img.get_attribute("src")
-                        # Noon جرب أول صورة كبيرة
                         if src and "noon" in link and "product" in src and "default" not in src:
                             img_url = src
                             break
-                        # Taobao أول صورة jpg
                         if src and "taobao" in link and ".jpg" in src:
                             img_url = src
                             break
@@ -157,15 +147,4 @@ options.add_argument("--disable-software-rasterizer")  # إضافة جديدة
         except Exception as e:
             print(f"⚠️ Error row {row_num}: {e}")
     driver.quit()
-
 print("🎉 Done (Playwright + Selenium fallback)")
-
-# معالجة الأخطاء الرئيسية
-if __name__ == "__main__":
-    try:
-        # كل الكود هنا
-    except Exception as e:
-        print(f"🔥 Critical error: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        raise e
