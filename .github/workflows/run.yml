@@ -23,6 +23,11 @@ jobs:
           pip install gspread oauth2client playwright selenium webdriver-manager google-api-python-client google-auth google-auth-oauthlib google-auth-httplib2
           python -m playwright install
 
+      - name: Create Google Service Account JSON from secret
+        run: echo "$GOOGLE_CREDS" > service_account.json
+        env:
+          GOOGLE_CREDS: ${{ secrets.GOOGLE_CREDS }}
+
       - name: Run Extract Photos script
         run: python extract_photos.py
 
