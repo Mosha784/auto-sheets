@@ -98,4 +98,31 @@ def update_dropdown(creds, form_id, item_index, title, options):
             }
         ]
     }
-    forms.forms(
+    forms.forms().batchUpdate(formId=form_id, body=body).execute()
+    print(
+        f"✅ [{title}] – {form_id[:10]}… محدث بـ {len(options)} خيار"
+        f"  ({datetime.datetime.now():%Y-%m-%d %H:%M:%S})"
+    )
+
+def main():
+    creds = get_creds()
+    for cfg in CONFIGS:
+        opts = fetch_unique_values(
+            creds, cfg["spreadsheet_id"], cfg["sheet_range"]
+        )
+        if not opts:
+            print(f"⚠️ لا قيم في {cfg['sheet_range']}")
+            continue
+        idx = find_dropdown_index(
+            creds, cfg["form_id"], cfg["question_title"]
+        )
+        update_dropdown(
+            creds,
+            cfg["form_id"],
+            idx,
+            cfg["question_title"],
+            opts,
+        )
+
+if __name__ == "__main__":
+    main()
