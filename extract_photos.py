@@ -95,12 +95,18 @@ with sync_playwright() as p:
                 failed_rows.append(idx+1)
     browser.close()
 
+# جرب Selenium لو فيه روابط فشلت
 if failed_links:
     print("\n🚨 Trying Selenium for failed links...")
+
     user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
     options = Options()
+    options.add_argument('--headless=new')         # Headless mode (جديد وحديث)
+    options.add_argument('--no-sandbox')           # حل مشاكل CI
+    options.add_argument('--disable-dev-shm-usage')# حل مشاكل CI
     options.add_argument(f"user-agent={user_agent}")
-    options.add_argument("--start-maximized")
+    options.add_argument("--window-size=1920,1080")
+
     driver = webdriver.Chrome(service=ChromeService(ChromeDriverManager().install()), options=options)
 
     for i, link in enumerate(failed_links):
@@ -110,20 +116,24 @@ if failed_links:
             driver.get(link)
             time.sleep(8)
             img_url = None
+            # جرب og:image الأول
             try:
                 og = driver.find_element(By.XPATH, '//meta[@property="og:image"]')
                 img_url = og.get_attribute("content")
                 print("OG IMAGE:", img_url)
             except:
                 pass
+            # لو مفيش og:image أو فاضي جرب صور المنتجات في الصفحة
             if not img_url or ("noon" in link and "default" in (img_url or "")):
                 try:
                     imgs = driver.find_elements(By.XPATH, '//img[contains(@src, ".jpg") or contains(@src, ".jpeg") or contains(@src, ".png")]')
                     for img in imgs:
                         src = img.get_attribute("src")
+                        # Noon جرب أول صورة كبيرة
                         if src and "noon" in link and "product" in src and "default" not in src:
                             img_url = src
                             break
+                        # Taobao أول صورة jpg
                         if src and "taobao" in link and ".jpg" in src:
                             img_url = src
                             break
