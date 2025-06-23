@@ -44,5 +44,8 @@ jobs:
       - name: Run import_pywhatkit_as_kit script
         run: python import_pywhatkit_as_kit.py
 
+      - name: Run Detect Category script
+        run: python detect_category.py
+
       - name: Run Update Form script
         run: python update_form.py
