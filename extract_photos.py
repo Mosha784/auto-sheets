@@ -38,29 +38,68 @@ col_g = [row[6] if len(row) > 6 else '' for row in data]
 col_h = [row[7] if len(row) > 7 else '' for row in data]
 
 def smart_get_image_url(link, page):
-    if not link: return None
+    if not link:
+        return None
+
+    # روابط Google Drive أو صورة مباشرة
     if "drive.google.com" in link:
         match = re.search(r"/d/([^/]+)", link)
         return f"https://drive.google.com/uc?export=download&id={match.group(1)}" if match else None
     if link.lower().endswith(('.jpg', '.jpeg', '.png', '.webp', '.gif')):
         return link
+
+    # Amazon (id="landingImage")
     if "amazon." in link:
         img = page.query_selector("#landingImage")
         if img:
-            return img.get_attribute("src")
+            src = img.get_attribute("src")
+            if src and src.strip():
+                print(f"DEBUG: Amazon landingImage found: {src}")
+                return src
         meta = page.query_selector('meta[property="og:image"]')
         if meta:
-            return meta.get_attribute("content")
+            content = meta.get_attribute("content")
+            if content and content.strip():
+                print(f"DEBUG: Amazon og:image found: {content}")
+                return content
+
+    # Noon (og:image فقط لو متاحة)
     if "noon.com" in link:
         meta = page.query_selector('meta[property="og:image"]')
         if meta:
-            return meta.get_attribute("content")
+            content = meta.get_attribute("content")
+            if content and content.strip():
+                print(f"DEBUG: Noon og:image found: {content}")
+                return content
+
+    # مواقع ووردبريس - og:image
     meta = page.query_selector('meta[property="og:image"]')
     if meta:
-        return meta.get_attribute("content")
+        content = meta.get_attribute("content")
+        if content and content.strip():
+            print(f"DEBUG: og:image found: {content}")
+            return content
+
+    # أول صورة كبيرة في الصفحة
     img = page.query_selector('img[src*=".jpg"], img[src*=".jpeg"], img[src*=".png"], img[src*=".webp"]')
     if img:
-        return img.get_attribute("src")
+        src = img.get_attribute("src")
+        if src and src.strip():
+            print(f"DEBUG: First big image found: {src}")
+            return src
+
+    # Fallback قوي: اطبع كل الصور الكبيرة الموجودة
+    imgs = page.query_selector_all('img')
+    all_img_srcs = []
+    for img in imgs:
+        src = img.get_attribute('src')
+        if src and any(ext in src.lower() for ext in ['.jpg', '.jpeg', '.png', '.webp']):
+            all_img_srcs.append(src)
+    if all_img_srcs:
+        print("DEBUG: All found img srcs (fallback):", all_img_srcs)
+        # رجع أول صورة كـ fallback (لو ده مناسب ليك)
+        return all_img_srcs[0]
+
     return None
 
 print("🔍 Extracting images for all empty G with link in H ...")
