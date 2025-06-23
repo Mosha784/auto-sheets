@@ -39,7 +39,7 @@ dst_tab2 = 'Raw Data Iraq'
 
 # نقل عمود D إلى B
 src_ws2 = client.open_by_url(SHEET_URL2).worksheet(src_tab2)
-src_values2 = src_ws2.col_values(3)[1:]  # عمود D من الصف 2
+src_values2 = src_ws2.col_values(5)[1:]  # عمود D من الصف 2
 
 src_values2 = [v for v in src_values2 if v.strip()]
 src_data2 = [[v] for v in src_values2]
