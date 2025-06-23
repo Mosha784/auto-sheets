@@ -22,7 +22,7 @@ worksheet = sheet.worksheet("Missing In Form")
 
 print("🔁 Copying M:U to A:I ...")
 data = worksheet.get_all_values()
-rows = [row for row in data[1:] if any(row[12:21])]  # الصفوف بعد الهيدر فقط
+rows = [row for row in data[1:] if any(row[12:21])]
 first_empty = next((i for i, row in enumerate(data) if not row[0].strip()), len(data))
 for row in rows:
     values = row[12:21]
@@ -38,14 +38,17 @@ col_g = [row[6] if len(row) > 6 else '' for row in data]
 col_h = [row[7] if len(row) > 7 else '' for row in data]
 
 def smart_get_image_url(link, page):
-    if not link:
-        return None
+    if not link: return None
 
     # روابط Google Drive أو صورة مباشرة
     if "drive.google.com" in link:
         match = re.search(r"/d/([^/]+)", link)
-        return f"https://drive.google.com/uc?export=download&id={match.group(1)}" if match else None
+        if match:
+            url = f"https://drive.google.com/uc?export=download&id={match.group(1)}"
+            print(f"DEBUG: Google Drive image found: {url}")
+            return url
     if link.lower().endswith(('.jpg', '.jpeg', '.png', '.webp', '.gif')):
+        print(f"DEBUG: Direct image link: {link}")
         return link
 
     # Amazon (id="landingImage")
@@ -100,6 +103,7 @@ def smart_get_image_url(link, page):
         # رجع أول صورة كـ fallback (لو ده مناسب ليك)
         return all_img_srcs[0]
 
+    print("DEBUG: No image found at all.")
     return None
 
 print("🔍 Extracting images for all empty G with link in H ...")
@@ -109,7 +113,7 @@ with sync_playwright() as p:
     browser = p.chromium.launch(headless=True)
     user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
     page = browser.new_page(user_agent=user_agent)
-    for idx in range(1, len(data)):  # يبدأ من الصف 2 (idx=1)
+    for idx in range(1, len(data)):
         img_g = col_g[idx] if idx < len(col_g) else ''
         link = col_h[idx] if idx < len(col_h) else ''
         if (not img_g or not img_g.strip()) and link and link.strip():
@@ -119,7 +123,7 @@ with sync_playwright() as p:
                     img_url = smart_get_image_url(link, page=None)
                 else:
                     page.goto(link, timeout=60000)
-                    time.sleep(8)
+                    time.sleep(15)  # زودت الـ sleep هنا!
                     img_url = smart_get_image_url(link, page)
                 if img_url:
                     worksheet.update_cell(idx+1, 7, img_url)
@@ -134,15 +138,14 @@ with sync_playwright() as p:
                 failed_rows.append(idx+1)
     browser.close()
 
-# جرب Selenium لو فيه روابط فشلت
+# الآن نحاول على الروابط اللي فشلت باستخدام Selenium
 if failed_links:
     print("\n🚨 Trying Selenium for failed links...")
-
     user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
     options = Options()
-    options.add_argument('--headless=new')         # Headless mode (جديد وحديث)
-    options.add_argument('--no-sandbox')           # حل مشاكل CI
-    options.add_argument('--disable-dev-shm-usage')# حل مشاكل CI
+    options.add_argument('--headless=new')
+    options.add_argument('--no-sandbox')
+    options.add_argument('--disable-dev-shm-usage')
     options.add_argument(f"user-agent={user_agent}")
     options.add_argument("--window-size=1920,1080")
 
@@ -153,7 +156,7 @@ if failed_links:
         print(f"\n🔗 {link}")
         try:
             driver.get(link)
-            time.sleep(8)
+            time.sleep(15)
             img_url = None
             # جرب og:image الأول
             try:
@@ -166,6 +169,7 @@ if failed_links:
             if not img_url or ("noon" in link and "default" in (img_url or "")):
                 try:
                     imgs = driver.find_elements(By.XPATH, '//img[contains(@src, ".jpg") or contains(@src, ".jpeg") or contains(@src, ".png")]')
+                    all_img_srcs = []
                     for img in imgs:
                         src = img.get_attribute("src")
                         # Noon جرب أول صورة كبيرة
@@ -176,6 +180,11 @@ if failed_links:
                         if src and "taobao" in link and ".jpg" in src:
                             img_url = src
                             break
+                        if src and any(ext in src.lower() for ext in ['.jpg', '.jpeg', '.png']):
+                            all_img_srcs.append(src)
+                    if not img_url and all_img_srcs:
+                        print("DEBUG (Selenium): All found img srcs (fallback):", all_img_srcs)
+                        img_url = all_img_srcs[0]
                 except:
                     pass
             if img_url:
@@ -186,4 +195,5 @@ if failed_links:
         except Exception as e:
             print(f"⚠️ Error row {row_num}: {e}")
     driver.quit()
+
 print("🎉 Done (Playwright + Selenium fallback)")
