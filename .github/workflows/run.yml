@@ -38,6 +38,9 @@ jobs:
       - name: Run Extract Photos script
         run: python extract_photos.py
 
+      - name: Run Move Raw Data script
+        run: python move_raw_data.py
+
       - name: Run import_pywhatkit_as_kit script
         run: python import_pywhatkit_as_kit.py
 
