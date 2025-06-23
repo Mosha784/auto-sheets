@@ -14,7 +14,7 @@ client = gspread.authorize(creds)
 SHEET_URL = 'https://docs.google.com/spreadsheets/d/1GqiFgV5EesNaL3JGWkMPQfw7GjTpYXakK8Dtz9jPt2A/edit'
 
 # التابات
-src_tab = 'Raw Data Missing!'
+src_tab = 'Raw Data Missing'
 dst_tab = 'PR Follow UP'
 
 # قراءة العمود A من Raw Data Missing (بدءًا من الصف الثاني)
