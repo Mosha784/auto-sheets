@@ -10,7 +10,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.options import Options
 from webdriver_manager.chrome import ChromeDriverManager
 
-# تحميل بيانات الخدمة من ملف خارجي
+# 1. إعداد الوصول لجوجل شيت
 with open('service_account.json') as f:
     service_account_info = json.load(f)
 
@@ -20,54 +20,56 @@ client = gspread.authorize(creds)
 sheet = client.open_by_url("https://docs.google.com/spreadsheets/d/1YFdOAR04ORhSbs38KfZPEdJQouX-bcH6exWjI06zvec/edit")
 worksheet = sheet.worksheet("Missing In Form")
 
-# دالة مساعدة لتنظيف الرابط والحصول على جودة عالية
+# 2. دالة تنظيف الرابط للحصول على أعلى جودة
 def clean_alibaba_url(url):
     if not url: return url
-    # إزالة لاحقة المقاسات مثل _300x300.jpg للحصول على الصورة الأصلية
+    # إزالة لاحقات الحجم وتحويل الرابط لبروتوكول كامل
     url = re.sub(r'_\d+x\d+.*$', '', url)
     if url.startswith('//'):
         url = "https:" + url
     return url
 
+# 3. الدالة الذكية لاستخراج الصور (Playwright)
 def smart_get_image_url(link, page):
     if not link: return None
 
-    # روابط Google Drive أو صورة مباشرة
+    # روابط صور مباشرة أو جوجل درايف
     if "drive.google.com" in link:
         match = re.search(r"/d/([^/]+)", link)
-        if match:
-            return f"https://drive.google.com/uc?export=download&id={match.group(1)}"
+        return f"https://drive.google.com/uc?export=download&id={match.group(1)}" if match else None
             
-    if link.lower().endswith(('.jpg', '.jpeg', '.png', '.webp', '.gif')):
+    if link.lower().endswith(('.jpg', '.jpeg', '.png', '.webp')):
         return link
 
-    # Alibaba & 1688 (تعديل دقيق لمنع اللوجو)
+    # منطق علي بابا و 1688 الصارم
     if "alibaba.com" in link or "1688.com" in link:
-        # 1. محاولة og:image أولاً
-        meta = page.query_selector('meta[property="og:image"]')
-        if meta:
-            content = meta.get_attribute("content")
-            if content and "logo" not in content.lower():
-                return clean_alibaba_url(content)
-        
-        # 2. البحث عن كلاسات الصور الرئيسية للمنتج
-        product_selectors = [
-            "img.main-image", ".module-pdp-main-image img", 
-            "img.detail-main-image", ".image-viewer img"
-        ]
-        for selector in product_selectors:
-            img = page.query_selector(selector)
-            if img:
-                src = img.get_attribute("src") or img.get_attribute("data-src")
-                if src and "logo" not in src.lower():
-                    return clean_alibaba_url(src)
+        try:
+            # محاولة الاستخراج من سكريبتات الصفحة (أضمن طريقة لتجنب اللوجو)
+            script_content = page.evaluate('''() => {
+                const scripts = Array.from(document.querySelectorAll('script'));
+                return scripts.map(s => s.innerText).join(' ');
+            }''')
+            
+            # البحث عن رابط .jpg (صور المنتجات) وتجاهل الـ .png (اللوجو)
+            img_match = re.search(r'(https:[^"]+?\.jpg)', script_content)
+            if img_match:
+                found_url = img_match.group(1).replace('\\u002F', '/')
+                print(f"✅ Alibaba JSON Match: {found_url}")
+                return clean_alibaba_url(found_url)
 
-    # Amazon
+            # محاولة og:image بشرط ألا يكون png
+            meta = page.query_selector('meta[property="og:image"]')
+            if meta:
+                content = meta.get_attribute("content")
+                if content and ".jpg" in content.lower():
+                    return clean_alibaba_url(content)
+        except: pass
+
+    # أمازون ونون والمواقع الأخرى
     if "amazon." in link:
         img = page.query_selector("#landingImage")
         if img: return img.get_attribute("src")
 
-    # الخيار العام (Open Graph)
     meta = page.query_selector('meta[property="og:image"]')
     if meta:
         content = meta.get_attribute("content")
@@ -75,48 +77,46 @@ def smart_get_image_url(link, page):
 
     return None
 
-# --- بداية التنفيذ ---
-print("🔁 Copying M:U to A:I ...")
-data = worksheet.get_all_values()
-# (ملاحظة: تركت منطق النسخ كما هو في كودك الأصلي)
-# ... [كود النسخ الخاص بك] ...
+# --- بداية التشغيل ---
 
-print("🔍 Extracting images...")
+print("🔍 Starting Extraction Process...")
+data = worksheet.get_all_values()
 failed_links = []
 failed_rows = []
 
 with sync_playwright() as p:
     browser = p.chromium.launch(headless=True)
-    user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    page = browser.new_page(user_agent=user_agent)
+    context = browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+    page = context.new_page()
     
     for idx in range(1, len(data)):
-        img_g = data[idx][6] if len(data[idx]) > 6 else ''
+        img_val = data[idx][6] if len(data[idx]) > 6 else ''
         link = data[idx][7] if len(data[idx]) > 7 else ''
         
-        if (not img_g or not img_g.strip()) and link and link.strip():
+        if (not img_val or not img_val.strip()) and link and link.strip():
+            print(f"🌐 Row {idx+1}: Processing {link[:50]}...")
             try:
-                if "drive.google.com" in link or link.lower().endswith(('.jpg', '.jpeg', '.png')):
-                    img_url = smart_get_image_url(link, page=None)
+                if "drive.google.com" in link or link.lower().endswith(('.jpg', '.jpeg')):
+                    img_url = smart_get_image_url(link, None)
                 else:
-                    page.goto(link, timeout=60000)
-                    time.sleep(10) # انتظار للتحميل
+                    page.goto(link, timeout=60000, wait_until="domcontentloaded")
+                    time.sleep(8) # وقت كافٍ لتحميل السكريبتات
                     img_url = smart_get_image_url(link, page)
                 
                 if img_url:
                     worksheet.update_cell(idx+1, 7, img_url)
-                    print(f"✅ Row {idx+1}: {img_url}")
+                    print(f"✅ Success: {img_url}")
                 else:
                     failed_links.append(link)
                     failed_rows.append(idx+1)
-            except Exception as e:
+            except:
                 failed_links.append(link)
                 failed_rows.append(idx+1)
     browser.close()
 
-# --- محاولة Selenium للروابط الفاشلة ---
+# --- محاولة Selenium (للروابط التي فشلت) ---
 if failed_links:
-    print("\n🚨 Trying Selenium for failed links...")
+    print("\n🚨 Retrying failed links with Selenium...")
     options = Options()
     options.add_argument('--headless=new')
     driver = webdriver.Chrome(service=ChromeService(ChromeDriverManager().install()), options=options)
@@ -125,31 +125,17 @@ if failed_links:
         row_num = failed_rows[i]
         try:
             driver.get(link)
-            time.sleep(12)
-            img_url = None
-            
-            # محاولة og:image مع استبعاد اللوجو
-            try:
-                og = driver.find_element(By.XPATH, '//meta[@property="og:image"]')
-                content = og.get_attribute("content")
-                if "logo" not in content.lower():
-                    img_url = clean_alibaba_url(content)
-            except: pass
-
-            if not img_url:
-                # محاولة البحث عن صور المنتج باستبعاد الكلمات المحظورة
-                imgs = driver.find_elements(By.TAG_NAME, 'img')
-                for img in imgs:
-                    src = img.get_attribute("src")
-                    if src and any(ext in src.lower() for ext in ['.jpg', '.png', '.jpeg']):
-                        if not any(x in src.lower() for x in ['logo', 'icon', 'banner', 'nav']):
-                            img_url = clean_alibaba_url(src)
-                            break
-            
-            if img_url:
-                worksheet.update_cell(row_num, 7, img_url)
-                print(f"✅ Selenium Row {row_num}: {img_url}")
+            time.sleep(10)
+            # البحث عن أول صورة .jpg وليست لوجو
+            images = driver.find_elements(By.TAG_NAME, 'img')
+            for img in images:
+                src = img.get_attribute("src")
+                if src and ".jpg" in src.lower() and "logo" not in src.lower():
+                    final_url = clean_alibaba_url(src)
+                    worksheet.update_cell(row_num, 7, final_url)
+                    print(f"✅ Selenium Fixed Row {row_num}")
+                    break
         except: pass
     driver.quit()
 
-print("🎉 Process Finished.")
+print("🎉 Task Completed.")
