@@ -2,7 +2,7 @@ name: Run Python Scripts Sequentially
 
 on:
   schedule:
-    - cron: "*/30 * * * *" 
+    - cron: "*/30 * * * *"
   workflow_dispatch:
 
 jobs:
@@ -20,7 +20,8 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install gspread oauth2client playwright requests
+          # تثبيت كافة المكتبات المطلوبة لكل الإسكربتات
+          pip install gspread oauth2client playwright requests google-api-python-client google-auth google-auth-oauthlib google-auth-httplib2 selenium webdriver-manager
           python -m playwright install chromium
 
       - name: Create Google Service Account JSON from secret
