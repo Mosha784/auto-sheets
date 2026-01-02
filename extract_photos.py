@@ -16,60 +16,82 @@ client = gspread.authorize(creds)
 sheet = client.open_by_url("https://docs.google.com/spreadsheets/d/1YFdOAR04ORhSbs38KfZPEdJQouX-bcH6exWjI06zvec/edit")
 worksheet = sheet.worksheet("Missing In Form")
 
-def clean_url(url):
-    """تنظيف الرابط للحصول على أعلى جودة وتصحيح البروتوكول"""
+def clean_final_url(url):
     if not url: return None
-    url = re.sub(r'_\d+x\d+.*$', '', url) # إزالة أحجام التصغير
+    # إزالة أحجام التصغير للحصول على الصورة الأصلية
+    url = re.sub(r'_\d+x\d+.*$', '', url)
     if url.startswith('//'): url = "https:" + url
     return url
 
-def get_product_image(link, page):
-    """استراتيجية متعددة الطبقات لضمان جلب صورة المنتج وليس اللوجو"""
+def try_extract_methods(link, page):
+    """تجربة 5 طرق مختلفة لاستخراج صورة المنتج"""
     
-    # الطبقة الأولى: محاولة سريعة عبر وسم og:image باستخدام Requests
-    # هذه الطريقة تتخطى حماية المتصفحات في كثير من الأحيان
+    # --- الطريقة 1: الطلب المباشر (Fast HTTP Request) ---
     try:
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
         res = requests.get(link, headers=headers, timeout=10)
         if res.status_code == 200:
-            # البحث عن رابط ينتهي بـ .jpg (صور المنتجات) ويستبعد .png (اللوجو)
+            # البحث عن og:image بشرط أن تكون JPG ولا تحتوي على وسم اللوجو tps-
             match = re.search(r'property="og:image"\s+content="([^"]+\.jpg[^"]*)"', res.text)
-            if match:
-                img = match.group(1)
-                if "tps-" not in img: return clean_url(img)
+            if match and "tps-" not in match.group(1):
+                return clean_final_url(match.group(1))
     except: pass
 
-    # الطبقة الثانية: استخدام Playwright لاستخراج الصورة من داخل الـ DOM
+    # --- الطريقة 2: البحث في JSON الصفحة (Scripts Parsing) ---
     try:
-        # البحث عن وسوم og:image أو الصور داخل معرض الصور الرئيسي
-        img_url = page.evaluate('''() => {
-            // 1. فحص الـ Meta tags
-            const og = document.querySelector('meta[property="og:image"]');
-            if (og && og.content.includes(".jpg") && !og.content.includes("tps-")) return og.content;
-            
-            // 2. فحص الصور الرئيسية في الصفحة
-            const imgs = Array.from(document.querySelectorAll('img'));
-            const productImg = imgs.find(i => 
-                i.src.includes(".jpg") && 
-                !i.src.includes("logo") && 
-                !i.src.includes("tps-") &&
-                (i.width > 200 || i.className.includes("main") || i.className.includes("detail"))
-            );
-            return productImg ? productImg.src : null;
+        script_data = page.evaluate('''() => {
+            const scripts = Array.from(document.querySelectorAll('script'));
+            return scripts.map(s => s.innerText).join(' ');
         }''')
-        if img_url: return clean_url(img_url)
+        # البحث عن روابط الصور داخل مصفوفة الصور في السكريبت
+        img_match = re.search(r'(https:[^"]+?\.jpg)', script_data)
+        if img_match and "tps-" not in img_match.group(1):
+            return clean_final_url(img_match.group(1).replace('\\u002F', '/'))
     except: pass
-    
+
+    # --- الطريقة 3: فحص الصور الرئيسية (Gallery Selectors) ---
+    selectors = [
+        "img.main-image", ".module-pdp-main-image img", 
+        ".image-viewer img", "img.detail-main-image"
+    ]
+    for selector in selectors:
+        try:
+            img = page.query_selector(selector)
+            if img:
+                src = img.get_attribute("src") or img.get_attribute("data-src")
+                if src and ".jpg" in src.lower() and "tps-" not in src:
+                    return clean_final_url(src)
+        except: continue
+
+    # --- الطريقة 4: البحث عن أكبر صورة JPG في الصفحة ---
+    try:
+        best_img = page.evaluate('''() => {
+            const imgs = Array.from(document.querySelectorAll('img'));
+            const filtered = imgs.filter(i => i.src.includes('.jpg') && !i.src.includes('tps-') && !i.src.includes('logo'));
+            if (filtered.length === 0) return null;
+            // ترتيب الصور حسب الحجم التقديري
+            filtered.sort((a, b) => (b.width * b.height) - (a.width * a.height));
+            return filtered[0].src;
+        }''')
+        if best_img: return clean_final_url(best_img)
+    except: pass
+
+    # --- الطريقة 5: الـ Meta Tag عبر Playwright ---
+    try:
+        meta_img = page.get_attribute('meta[property="og:image"]', "content")
+        if meta_img and ".jpg" in meta_img.lower() and "tps-" not in meta_img:
+            return clean_final_url(meta_img)
+    except: pass
+
     return None
 
-# --- التنفيذ الرئيسي ---
-print("🔍 Starting Final Extraction Process...")
+# --- دورة العمل الأساسية ---
+print("🚀 Starting Multi-Method Extraction...")
 data = worksheet.get_all_values()
 
 with sync_playwright() as p:
     browser = p.chromium.launch(headless=True)
-    # استخدام User-Agent حديث لتجنب اكتشاف "البوت"
-    context = browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+    context = browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
     page = context.new_page()
 
     for idx in range(1, len(data)):
@@ -77,21 +99,20 @@ with sync_playwright() as p:
         link = data[idx][7] if len(data[idx]) > 7 else ''
         
         if (not img_cell or not img_cell.strip()) and link and link.strip():
-            print(f"🌐 Row {idx+1}: Processing {link[:50]}...")
+            print(f"🌐 Row {idx+1}: Attempting {link[:40]}...")
             try:
-                # محاولة جلب الصورة (سواء عبر طلب سريع أو متصفح)
                 page.goto(link, timeout=60000, wait_until="domcontentloaded")
-                time.sleep(3) # وقت بسيط لفك الحماية
+                time.sleep(5) # انتظار رندرة الصفحة
                 
-                final_img = get_product_image(link, page)
+                final_url = try_extract_methods(link, page)
                 
-                if final_img:
-                    worksheet.update_cell(idx+1, 7, final_img)
-                    print(f"✅ Success: {final_img}")
+                if final_url:
+                    worksheet.update_cell(idx+1, 7, final_url)
+                    print(f"✅ Method Success: {final_url}")
                 else:
-                    print(f"❌ Failed to find product image")
-            except Exception as e:
-                print(f"⚠️ Error on Row {idx+1}")
+                    print(f"❌ All 5 methods failed for Row {idx+1}")
+            except:
+                print(f"⚠️ Connection Error on Row {idx+1}")
     
     browser.close()
-print("🎉 Task Completed Successfully.")
+print("🎉 Process Finished.")
