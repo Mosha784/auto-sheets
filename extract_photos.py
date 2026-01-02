@@ -75,6 +75,23 @@ def smart_get_image_url(link, page):
                 print(f"DEBUG: Noon og:image found: {content}")
                 return content
 
+    # Alibaba: ابحث عن صورة المنتج الرئيسية (تجنب اللوجو)
+    if "alibaba.com" in link or "1688.com" in link:
+        # ابحث عن img في gallery أو مع src يحتوي على alicdn.com ولا يحتوي على logo
+        img = page.query_selector('img[src*="alicdn.com"]:not([src*="logo"])')
+        if img:
+            src = img.get_attribute("src")
+            if src and src.strip():
+                print(f"DEBUG: Alibaba product image found: {src}")
+                return src
+        # Fallback: og:image إذا لم يجد
+        meta = page.query_selector('meta[property="og:image"]')
+        if meta:
+            content = meta.get_attribute("content")
+            if content and content.strip() and "logo" not in content.lower():
+                print(f"DEBUG: Alibaba og:image found: {content}")
+                return content
+
     # مواقع ووردبريس - og:image
     meta = page.query_selector('meta[property="og:image"]')
     if meta:
@@ -178,6 +195,10 @@ if failed_links:
                             break
                         # Taobao أول صورة jpg
                         if src and "taobao" in link and ".jpg" in src:
+                            img_url = src
+                            break
+                        # Alibaba: ابحث عن صورة من alicdn.com وتجنب logo
+                        if src and ("alibaba" in link or "1688" in link) and "alicdn.com" in src and "logo" not in src.lower():
                             img_url = src
                             break
                         if src and any(ext in src.lower() for ext in ['.jpg', '.jpeg', '.png']):
