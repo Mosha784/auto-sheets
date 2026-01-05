@@ -11,7 +11,6 @@ from selenium.webdriver.chrome.options import Options
 from webdriver_manager.chrome import ChromeDriverManager
 
 
-تحميل بيانات الخدمة من ملف خارجي
 
 with open('service_account.json') as f:
 service_account_info = json.load(f)
