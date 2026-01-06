@@ -20,7 +20,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          # تثبيت كافة المكتبات المطلوبة لكل الإسكربتات
+          # تثبيت كافة المكتبات المطلوبة لجميع الإسكربتات لضمان عدم تعطل النظام
           pip install gspread oauth2client playwright requests google-api-python-client google-auth google-auth-oauthlib google-auth-httplib2 selenium webdriver-manager
           python -m playwright install chromium
 
@@ -31,6 +31,9 @@ jobs:
 
       - name: Run Extract Photos script
         run: python extract_photos.py
+
+      - name: Run Copy Image Address script
+        run: python copy_image_address.py
 
       - name: Run Move Raw Data script
         run: python move_raw_data.py
