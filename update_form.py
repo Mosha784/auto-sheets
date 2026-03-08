@@ -53,7 +53,8 @@ def fetch_unique_values(creds, spreadsheet_id, sheet_range):
     rows = rows[1:]
     seen, unique = set(), []
     for r in rows:
-        if r and (v := r[0].strip()) and v not in seen:
+        # التعديل هنا: تنظيف النص من الأسطر الجديدة قبل إضافته للقائمة
+        if r and (v := r[0].replace('\n', ' ').replace('\r', '').strip()) and v not in seen:
             seen.add(v)
             unique.append(v)
     return unique
