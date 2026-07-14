@@ -14,36 +14,74 @@ from webdriver_manager.chrome import ChromeDriverManager
 with open('service_account.json') as f:
     service_account_info = json.load(f)
 
-# إعداد الصلاحيات والاتصال بـ Google Sheets
 scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
 creds = ServiceAccountCredentials.from_json_keyfile_dict(service_account_info, scope)
 client = gspread.authorize(creds)
 sheet = client.open_by_url("https://docs.google.com/spreadsheets/d/1YFdOAR04ORhSbs38KfZPEdJQouX-bcH6exWjI06zvec/edit")
 worksheet = sheet.worksheet("Missing In Form")
 
-# عملية نسخ البيانات من الأعمدة M:U إلى A:I
+
+def cell(row, i):
+    """قراءة آمنة لخلية حتى لو الصف أقصر من المتوقع"""
+    return row[i] if len(row) > i else ''
+
+
+# ==========================================================
+# 1) نسخ M:U إلى A:I — دفعة واحدة + مسح المصدر بعد النسخ
+#    (المسح ضروري: بدونه نفس الصفوف كانت بتتنسخ تاني كل 30 دقيقة)
+# ==========================================================
 print("🔁 Copying M:U to A:I ...")
 data = worksheet.get_all_values()
-rows = [row for row in data[1:] if any(row[12:21])]
-first_empty = next((i for i, row in enumerate(data) if not row[0].strip()), len(data))
 
-for row in rows:
-    values = row[12:21]
-    if any(values):
-        row_index = first_empty + 1
-        # تحديث النطاق باستخدام التنسيق الجديد لتجنب التحذيرات
-        worksheet.update(values=[values], range_name=f"A{row_index}:I{row_index}")
-        first_empty += 1
-print("✅ Done copying.")
+rows_to_copy = []
+clear_ranges = []
+for sheet_row, row in enumerate(data[1:], start=2):
+    values = [cell(row, i) for i in range(12, 21)]  # M..U
+    if any(v.strip() for v in values):
+        rows_to_copy.append(values)
+        clear_ranges.append(f"M{sheet_row}:U{sheet_row}")
 
-# تحديث البيانات المحملة بعد عملية النسخ للبدء في استخراج الصور
+if rows_to_copy:
+    first_empty = next(
+        (i + 1 for i, row in enumerate(data) if not cell(row, 0).strip()),
+        len(data) + 1
+    )
+    end_row = first_empty + len(rows_to_copy) - 1
+    # كتابة كل الصفوف في طلب واحد بدل طلب لكل صف (توفير كبير في حصة الـ API)
+    worksheet.update(values=rows_to_copy, range_name=f"A{first_empty}:I{end_row}")
+    # مسح المصدر حتى لا تتكرر نفس الصفوف في التشغيل القادم
+    worksheet.batch_clear(clear_ranges)
+    print(f"✅ Copied {len(rows_to_copy)} rows and cleared M:U source.")
+else:
+    print("ℹ️ Nothing new in M:U to copy.")
+
+# ==========================================================
+# 2) استخراج الصور — الكتابة تتجمع في دفعات بدل update_cell لكل صف
+# ==========================================================
 data = worksheet.get_all_values()
-col_g = [row[6] if len(row) > 6 else '' for row in data]
-col_h = [row[7] if len(row) > 7 else '' for row in data]
+col_g = [cell(row, 6) for row in data]
+col_h = [cell(row, 7) for row in data]
+
+pending_updates = []  # [{'range': 'G5', 'values': [['url']]}, ...]
+
+
+def queue_update(row_num, url):
+    pending_updates.append({'range': f'G{row_num}', 'values': [[url]]})
+    if len(pending_updates) >= 10:
+        flush_updates()
+
+
+def flush_updates():
+    global pending_updates
+    if pending_updates:
+        worksheet.batch_update(pending_updates)
+        pending_updates = []
+
 
 def smart_get_image_url(link, page):
-    if not link: return None
-    
+    if not link:
+        return None
+
     # التعامل مع روابط Google Drive أو الصور المباشرة
     if "drive.google.com" in link:
         match = re.search(r"/d/([^/]+)", link)
@@ -70,16 +108,7 @@ def smart_get_image_url(link, page):
                 print(f"DEBUG: Amazon og:image found: {content}")
                 return content
 
-    # استخراج الصور من Noon
-    if "noon.com" in link:
-        meta = page.query_selector('meta[property="og:image"]')
-        if meta:
-            content = meta.get_attribute("content")
-            if content and content.strip():
-                print(f"DEBUG: Noon og:image found: {content}")
-                return content
-
-    # البحث عن og:image (عام للمواقع الأخرى مثل ووردبريس)
+    # og:image (يغطي Noon والمواقع العامة مثل ووردبريس)
     meta = page.query_selector('meta[property="og:image"]')
     if meta:
         content = meta.get_attribute("content")
@@ -87,7 +116,7 @@ def smart_get_image_url(link, page):
             print(f"DEBUG: og:image found: {content}")
             return content
 
-    # البحث عن أول صورة كبيرة بصيغة معروفة في الصفحة
+    # أول صورة كبيرة بصيغة معروفة في الصفحة
     img = page.query_selector('img[src*=".jpg"], img[src*=".jpeg"], img[src*=".png"], img[src*=".webp"]')
     if img:
         src = img.get_attribute("src")
@@ -95,56 +124,55 @@ def smart_get_image_url(link, page):
             print(f"DEBUG: First big image found: {src}")
             return src
 
-    # محاولة أخيرة: جمع كل روابط الصور في الصفحة واختيار الأولى
+    # محاولة أخيرة: أول رابط صورة في الصفحة
     imgs = page.query_selector_all('img')
-    all_img_srcs = []
     for img in imgs:
         src = img.get_attribute('src')
         if src and any(ext in src.lower() for ext in ['.jpg', '.jpeg', '.png', '.webp']):
-            all_img_srcs.append(src)
-    if all_img_srcs:
-        print("DEBUG: All found img srcs (fallback):", all_img_srcs)
-        return all_img_srcs[0]
+            print("DEBUG: Fallback first image:", src)
+            return src
 
     print("DEBUG: No image found at all.")
     return None
+
 
 print("🔍 Extracting images for all empty G with link in H ...")
 failed_links = []
 failed_rows = []
 
-# استخدام Playwright كمحرك أساسي
 with sync_playwright() as p:
     browser = p.chromium.launch(headless=True)
     user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
     page = browser.new_page(user_agent=user_agent)
-    
+
     for idx in range(1, len(data)):
         img_g = col_g[idx] if idx < len(col_g) else ''
         link = col_h[idx] if idx < len(col_h) else ''
-        
+
         if (not img_g or not img_g.strip()) and link and link.strip():
             print(f"🌐 Row {idx+1}: Fetching image from {link}")
             try:
                 if "drive.google.com" in link or link.lower().endswith(('.jpg', '.jpeg', '.png', '.webp', '.gif')):
                     img_url = smart_get_image_url(link, page=None)
                 else:
-                    page.goto(link, timeout=60000)
-                    time.sleep(15)  
+                    page.goto(link, timeout=60000, wait_until="domcontentloaded")
+                    time.sleep(6)  # كان 15 ثانية لكل صف — كان بيخلي التشغيل يتجاوز الـ 30 دقيقة ويتداخل مع التشغيل التالي
                     img_url = smart_get_image_url(link, page)
-                
+
                 if img_url:
-                    worksheet.update_cell(idx+1, 7, img_url)
+                    queue_update(idx + 1, img_url)
                     print(f"✅ Row {idx+1} done. {img_url}")
                 else:
                     print(f"❌ No image for row {idx+1}")
                     failed_links.append(link)
-                    failed_rows.append(idx+1)
+                    failed_rows.append(idx + 1)
             except Exception as e:
                 print(f"⚠️ Error row {idx+1}: {e}")
                 failed_links.append(link)
-                failed_rows.append(idx+1)
+                failed_rows.append(idx + 1)
     browser.close()
+
+flush_updates()
 
 # المحاولة الثانية باستخدام Selenium للروابط التي فشلت
 if failed_links:
@@ -164,18 +192,16 @@ if failed_links:
         print(f"\n🔗 {link}")
         try:
             driver.get(link)
-            time.sleep(15)
+            time.sleep(6)
             img_url = None
-            
-            # محاولة جلب og:image
+
             try:
                 og = driver.find_element(By.XPATH, '//meta[@property="og:image"]')
                 img_url = og.get_attribute("content")
                 print("OG IMAGE:", img_url)
-            except:
+            except Exception:
                 pass
-            
-            # محاولة البحث عن صور المنتج إذا لم يتوفر og:image
+
             if not img_url or ("noon" in link and "default" in (img_url or "")):
                 try:
                     imgs = driver.find_elements(By.XPATH, '//img[contains(@src, ".jpg") or contains(@src, ".jpeg") or contains(@src, ".png")]')
@@ -190,20 +216,21 @@ if failed_links:
                             break
                         if src and any(ext in src.lower() for ext in ['.jpg', '.jpeg', '.png']):
                             all_img_srcs.append(src)
-                    
+
                     if not img_url and all_img_srcs:
                         print("DEBUG (Selenium): Fallback to first image found.")
                         img_url = all_img_srcs[0]
-                except:
+                except Exception:
                     pass
-            
+
             if img_url:
-                worksheet.update_cell(row_num, 7, img_url)
+                queue_update(row_num, img_url)
                 print(f"✅ Row {row_num} done (via Selenium). {img_url}")
             else:
                 print(f"❌ Still no image for row {row_num}")
         except Exception as e:
             print(f"⚠️ Error row {row_num} in Selenium: {e}")
     driver.quit()
+    flush_updates()
 
 print("🎉 Process Finished (Playwright + Selenium fallback)")
