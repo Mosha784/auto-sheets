@@ -36,6 +36,7 @@ CATEGORY_KEYWORDS = {
     ],
 }
 
+
 def extract_name_from_link(link):
     if not link:
         return ""
@@ -51,6 +52,7 @@ def extract_name_from_link(link):
         return ""
     return name
 
+
 def detect_category(text):
     if not text:
         return ""
@@ -61,24 +63,29 @@ def detect_category(text):
                 return cat
     return "Unknown"
 
+
 ws = client.open_by_url(SHEET_URL).worksheet(TAB_NAME)
 data = ws.get_all_values()
 
 header = data[0]
 rows = data[1:]
 
-count = 0
+# تجميع كل التحديثات وإرسالها في طلب واحد بدل update_cell لكل صف
+# (كان بيضرب حد 60 كتابة/دقيقة في Google Sheets API مع عدد صفوف كبير)
+updates = []
 for idx, row in enumerate(rows, start=2):  # start=2 لأن أول صف هيدر
-    name = row[3] if len(row) > 3 else ""  # D
-    link = row[7] if len(row) > 7 else ""  # H
+    name = row[3] if len(row) > 3 else ""      # D
+    link = row[7] if len(row) > 7 else ""      # H
     category = row[8] if len(row) > 8 else ""  # I
 
     if not category.strip():
         name_from_link = extract_name_from_link(link)
         merged_text = f"{name} {name_from_link} {link}"
         cat = detect_category(merged_text)
-        ws.update_cell(idx, 9, cat)
+        updates.append({'range': f'I{idx}', 'values': [[cat]]})
         print(f"Row {idx}: {name[:25]}... | {name_from_link[:25]}... → {cat}")
-        count += 1
 
-print(f"\n✅ تم تحديث {count} صف في التصنيف تلقائيًا (باستخدام الاسم واللينك).")
+if updates:
+    ws.batch_update(updates)
+
+print(f"\n✅ تم تحديث {len(updates)} صف في التصنيف تلقائيًا (باستخدام الاسم واللينك).")
