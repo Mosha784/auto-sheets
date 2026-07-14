@@ -15,6 +15,22 @@ client = gspread.authorize(creds)
 sheet = client.open_by_url("https://docs.google.com/spreadsheets/d/1YFdOAR04ORhSbs38KfZPEdJQouX-bcH6exWjI06zvec/edit")
 worksheet = sheet.worksheet("Missing In Form")
 
+pending_updates = []
+
+
+def queue_update(row_num, url):
+    pending_updates.append({'range': f'G{row_num}', 'values': [[url]]})
+    if len(pending_updates) >= 10:
+        flush_updates()
+
+
+def flush_updates():
+    global pending_updates
+    if pending_updates:
+        worksheet.batch_update(pending_updates)
+        pending_updates = []
+
+
 def get_clean_image_address(page):
     """محاكاة عملية 'Copy Image Address' بدقة"""
     try:
@@ -40,15 +56,19 @@ def get_clean_image_address(page):
             
             return productImg ? productImg.src : null;
         }''')
-        
+
         if img_address:
             # تنظيف الرابط للحصول على الصورة الأصلية عالية الجودة
             img_address = re.sub(r'_\d+x\d+.*$', '', img_address)
-            if img_address.startswith('//'): img_address = "https:" + img_address
+            if img_address.startswith('//'):
+                img_address = "https:" + img_address
             return img_address
-    except:
+    except Exception as e:
+        # كان except: بدون نوع — بيخفي أي خطأ حقيقي
+        print(f"⚠️ evaluate error: {e}")
         return None
     return None
+
 
 # --- التنفيذ ---
 print("🚀 Starting Copy Image Address Script...")
@@ -62,22 +82,24 @@ with sync_playwright() as p:
     for idx in range(1, len(data)):
         img_val = data[idx][6] if len(data[idx]) > 6 else ''
         link = data[idx][7] if len(data[idx]) > 7 else ''
-        
+
         if (not img_val or not img_val.strip()) and link and link.strip():
             print(f"🌐 Row {idx+1}: Processing {link[:40]}...")
             try:
                 page.goto(link, timeout=60000, wait_until="domcontentloaded")
-                time.sleep(5) # انتظار تحميل الصور
-                
+                time.sleep(5)  # انتظار تحميل الصور
+
                 final_address = get_clean_image_address(page)
-                
+
                 if final_address:
-                    worksheet.update_cell(idx+1, 7, final_address)
+                    queue_update(idx + 1, final_address)
                     print(f"✅ Success: {final_address}")
                 else:
                     print(f"❌ Failed to find image address")
             except Exception as e:
                 print(f"⚠️ Error: {str(e)}")
-    
+
     browser.close()
+
+flush_updates()
 print("🎉 Script Finished.")
