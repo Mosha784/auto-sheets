@@ -5,44 +5,59 @@ on:
     - cron: "*/30 * * * *"
   workflow_dispatch:
 
+# منع تشغيلين متداخلين على نفس الشيتات (كان بيسبب كتابة فوق بعض وتكرار صفوف)
+concurrency:
+  group: sheets-automation
+  cancel-in-progress: false
+
 jobs:
   run-python-scripts:
     runs-on: ubuntu-latest
+    timeout-minutes: 25   # حد أقصى للـ job كله بدل ما يعلّق ساعات
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: '3.11'
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          # تثبيت كافة المكتبات المطلوبة لجميع الإسكربتات لضمان عدم تعطل النظام
           pip install gspread oauth2client playwright requests google-api-python-client google-auth google-auth-oauthlib google-auth-httplib2 selenium webdriver-manager
-          python -m playwright install chromium
+          # --with-deps بيثبت مكتبات النظام المطلوبة للكروميوم على الرانر
+          python -m playwright install --with-deps chromium
 
       - name: Create Google Service Account JSON from secret
-        run: echo "$GOOGLE_CREDS" > service_account.json
+        # printf أأمن من echo مع الـ JSON متعدد الأسطر
+        run: printf '%s' "$GOOGLE_CREDS" > service_account.json
         env:
           GOOGLE_CREDS: ${{ secrets.GOOGLE_CREDS }}
 
       - name: Run Extract Photos script
+        timeout-minutes: 12
         run: python extract_photos.py
 
+      # if: !cancelled() = الخطوة تشتغل حتى لو خطوة السكرابينج اللي قبلها وقعت
       - name: Run Copy Image Address script
+        if: ${{ !cancelled() }}
+        timeout-minutes: 8
         run: python copy_image_address.py
 
+      - name: Run Detect Category script
+        if: ${{ !cancelled() }}
+        run: python detect_category.py
+
       - name: Run Move Raw Data script
+        if: ${{ !cancelled() }}
         run: python move_raw_data.py
 
       - name: Run import_pywhatkit_as_kit script
+        if: ${{ !cancelled() }}
         run: python import_pywhatkit_as_kit.py
 
-      - name: Run Detect Category script
-        run: python detect_category.py
-
       - name: Run Update Form script
+        if: ${{ !cancelled() }}
         run: python update_form.py
