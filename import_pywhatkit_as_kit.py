@@ -21,33 +21,41 @@ dst_ws = client.open_by_url(DST_URL).worksheet('request')
 
 NUM_COLS = 22  # H:AC = 22 عمود = A:V في الوجهة
 
-all_values = src_ws.get('H:AC')
-last_src_row = len(all_values)  # آخر صف فيه بيانات في النطاق المصدر
 
-# تخطي الصفوف الفاضية تمامًا (كان بينسخ صفوف فاضية) + توحيد طول الصفوف
-data_rows = [
-    row + [''] * (NUM_COLS - len(row))
-    for row in all_values[1:]
-    if any(str(c).strip() for c in row)
+def row_key(row):
+    """مفتاح مقارنة موحّد للصف: 22 خلية نصية متقصّصة"""
+    padded = list(row) + [''] * (NUM_COLS - len(row))
+    return tuple(str(c).strip() for c in padded[:NUM_COLS])
+
+
+# بدون مسح المصدر (Sheet15 معادلات) — منع التكرار بمقارنة كل صف
+# بالصفوف الموجودة فعلًا في الوجهة A:V وتخطّي المطابق.
+all_values = src_ws.get('H:AC')
+
+src_rows = [
+    row for row in all_values[1:]
+    if any(str(c).strip() for c in row)  # تخطي الصفوف الفاضية تمامًا
 ]
 
-if not data_rows:
-    # كان بيضرب error لو مفيش بيانات (نطاق عكسي مثل A5:V4)
-    print('ℹ️ لا توجد بيانات جديدة في Sheet15 H:AC — لا شيء للنسخ.')
+dst_existing_raw = dst_ws.get('A:V')
+existing = {row_key(row) for row in dst_existing_raw if any(str(c).strip() for c in row)}
+
+new_rows = []
+for row in src_rows:
+    key = row_key(row)
+    if key not in existing:
+        new_rows.append(list(key))  # صف موحّد الطول 22 خلية
+        existing.add(key)           # حتى لا يتكرر نفس الصف داخل نفس التشغيل
+
+if not new_rows:
+    print('ℹ️ لا توجد صفوف جديدة في Sheet15 — كل الصفوف موجودة بالفعل في الوجهة.')
 else:
     col_b = dst_ws.col_values(2)
     first_empty = len(col_b) + 1
 
     start_row = first_empty
-    end_row = start_row + len(data_rows) - 1
+    end_row = start_row + len(new_rows) - 1
     dest_range = f'A{start_row}:V{end_row}'
 
-    # استخدام الوسائط المسماة (الترتيب القديم deprecated في gspread الحديث)
-    dst_ws.update(values=data_rows, range_name=dest_range)
-
-    # مسح المصدر بعد النسخ — بدون هذا كانت كل الصفوف تتنسخ من جديد كل 30 دقيقة
-    # لو مش عايز المسح (عايز تحتفظ بالبيانات في Sheet15) علّق السطر التالي،
-    # لكن ساعتها لازم تعمل آلية تانية لتمييز الصفوف المنسوخة وإلا هترجع مشكلة التكرار.
-    src_ws.batch_clear([f'H2:AC{last_src_row}'])
-
-    print(f'✅ تم لصق {len(data_rows)} صفًّا في النطاق {dest_range} وتم مسح المصدر لمنع التكرار.')
+    dst_ws.update(values=new_rows, range_name=dest_range)
+    print(f'✅ تم لصق {len(new_rows)} صفًّا جديدًا في النطاق {dest_range} (بدون مسح المصدر — المعادلات كما هي).')
