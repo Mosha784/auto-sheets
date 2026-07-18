@@ -39,9 +39,11 @@ jobs:
       - name: Run Extract Photos script
         timeout-minutes: 12
         env:
-          # اختياري: مفتاح Microlink لرفع حد الطلبات اليومية
-          # (السكربت شغال من غيره لكن بالحد المجاني المحدود)
+          # كل المفاتيح اختيارية — أي مفتاح غير موجود، طبقته تتخطى تلقائيًا
           MICROLINK_KEY: ${{ secrets.MICROLINK_KEY }}
+          SCRAPERAPI_KEY: ${{ secrets.SCRAPERAPI_KEY }}
+          SCRAPINGBEE_KEY: ${{ secrets.SCRAPINGBEE_KEY }}
+          JINA_KEY: ${{ secrets.JINA_KEY }}
         run: python extract_photos.py
 
       # if: !cancelled() = الخطوة تشتغل حتى لو خطوة قبلها وقعت
