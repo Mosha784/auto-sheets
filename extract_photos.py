@@ -248,7 +248,7 @@ def amazon_direct_image(link):
 def get_image_via_requests(link):
     for attempt, headers in ((1, DESKTOP_HEADERS), (2, MOBILE_HEADERS)):
         try:
-            r = requests.get(link, headers=headers, timeout=25, allow_redirects=True)
+            r = requests.get(link, headers=headers, timeout=15, allow_redirects=True)
             if r.status_code == 200 and 'captcha' not in r.url.lower():
                 url, how = extract_from_html(r.text, link)
                 if url:
@@ -273,7 +273,7 @@ def get_image_via_microlink(link):
         headers = {}
         if MICROLINK_KEY:
             headers['x-api-key'] = MICROLINK_KEY
-        r = requests.get('https://api.microlink.io/', params=params, headers=headers, timeout=40)
+        r = requests.get('https://api.microlink.io/', params=params, headers=headers, timeout=25)
         if r.status_code != 200:
             print(f"DEBUG: microlink status {r.status_code}")
             return None
@@ -299,7 +299,7 @@ Object.defineProperty(navigator, 'platform', { get: () => 'Win32' });
 
 
 def get_image_via_playwright(link, page):
-    page.goto(link, timeout=60000, wait_until="domcontentloaded")
+    page.goto(link, timeout=25000, wait_until="domcontentloaded")
     # سكرول بسيط يشغّل الـ lazy-loading ويبدو سلوكًا بشريًا
     try:
         page.mouse.wheel(0, 600)
@@ -401,7 +401,14 @@ if cleanup_ranges:
     worksheet.batch_clear(cleanup_ranges)
     print(f"🧹 Cleared {len(cleanup_ranges)} placeholder cells in G (alicdn tps) — will re-fetch them now.")
 
-results = {}  # row_num -> img_url — الكتابة تتم في الآخر بعد فلترة المتكرر
+# ================= إعدادات التشغيل =================
+MAX_ROWS_PER_RUN = 60        # حد أقصى للصفوف المعالجة في التشغيلة الواحدة —
+                             # الورك فلو بيشتغل كل 30 دقيقة فبيلحّق الباقي تدريجيًا
+TIME_BUDGET_SECONDS = 9 * 60  # السكربت يوقف نفسه ويحفظ قبل ما الـ timeout يقطعه ويضيّع الشغل
+FAILED_MARKER = "NO_IMAGE"    # علامة للصفوف الفاشلة حتى لا تُعاد كل تشغيل للأبد
+                             # (امسح العلامة من الخلية يدويًا لو عايز تعيد المحاولة لصف معين)
+
+script_start = time.time()
 
 
 def is_probable_url(link):
@@ -409,8 +416,45 @@ def is_probable_url(link):
     return bool(re.match(r'^https?://\S+\.\S+', link))
 
 
+# ============ آلية الكتابة التدريجية مع كشف الـ placeholder ============
+# الكتابة كل 10 نتائج (لو السكربت اتقطع، اللي خلص محفوظ)
+# ولو نفس الرابط ظهر لـ 3 صفوف مختلفة يُعتبر placeholder:
+# يتشال من المعلق، واللي اتكتب منه قبل كده يُمسح في النهاية
+url_counts = Counter()
+blacklist = set()
+pending = {}   # row -> url مستنية الكتابة
+written = {}   # row -> url اتكتبت فعلًا
 failed = []
 skipped_not_url = 0
+
+
+def flush(force=False):
+    global pending
+    if pending and (force or len(pending) >= 10):
+        updates = [{'range': f'G{r}', 'values': [[u]]} for r, u in sorted(pending.items())]
+        worksheet.batch_update(updates)
+        written.update(pending)
+        pending = {}
+
+
+def register_result(row_num, url):
+    url_counts[url] += 1
+    if url_counts[url] >= 3 and url not in blacklist:
+        blacklist.add(url)
+        print(f"🚫 رابط متكرر لعدة منتجات مختلفة — يُعتبر placeholder ويُرفض: {url[:80]}")
+        for r, u in list(pending.items()):
+            if u == url:
+                pending.pop(r)
+                failed.append(r)
+        # اللي اتكتب فعلًا بنفس الرابط هيتمسح في نهاية التشغيل
+    if url in blacklist:
+        failed.append(row_num)
+    else:
+        pending[row_num] = url
+        flush()
+
+
+stopped_reason = None
 
 with sync_playwright() as p:
     browser = p.chromium.launch(
@@ -427,7 +471,16 @@ with sync_playwright() as p:
     context.add_init_script(STEALTH_JS)
     page = context.new_page()
 
+    processed = 0
     for idx in range(1, len(data)):
+        # وقف رشيق قبل نفاد الوقت أو تجاوز حد الصفوف — الباقي يتكمّل في التشغيلة الجاية
+        if processed >= MAX_ROWS_PER_RUN:
+            stopped_reason = f"وصلنا حد {MAX_ROWS_PER_RUN} صف للتشغيلة الواحدة"
+            break
+        if time.time() - script_start > TIME_BUDGET_SECONDS:
+            stopped_reason = "قربت ميزانية الوقت تخلص"
+            break
+
         row = data[idx]
         img_g = cell(row, 6)
         link = cell(row, 7).strip()
@@ -440,16 +493,16 @@ with sync_playwright() as p:
             link = 'https://' + link
 
         # تخطي فوري لأي قيمة مش لينك (زي كلمة "string" الناتجة عن معادلة)
-        # بدل إضاعة دقيقة كاملة على كل صف في تجربة الطبقات الأربعة
         if not is_probable_url(link):
             skipped_not_url += 1
             continue
 
+        processed += 1
         print(f"🌐 Row {idx+1}: {link[:60]}")
         try:
             img_url = resolve_image(link, page)
             if img_url:
-                results[idx + 1] = img_url
+                register_result(idx + 1, img_url)
                 print(f"✅ Row {idx+1}: {img_url}")
             else:
                 failed.append(idx + 1)
@@ -462,31 +515,33 @@ with sync_playwright() as p:
 
     browser.close()
 
-# ============ فلترة الـ placeholders قبل الكتابة ============
-# لو نفس رابط الصورة رجع لأكتر من صفين مختلفين، فهو صورة صفحة حظر/خطأ
-# وليس صورة منتج (منتجات مختلفة مستحيل يكون لها نفس الصورة بالظبط)
-counts = Counter(results.values())
-placeholder_urls = {u for u, c in counts.items() if c >= 3}
-if placeholder_urls:
-    print(f"\n🚫 استبعاد {len(placeholder_urls)} رابط صورة متكرر لعدة صفوف مختلفة (placeholder وليس منتج):")
-    for u in placeholder_urls:
-        print(f"   {u[:90]}")
+# ============ الحفظ النهائي والتنضيف ============
+flush(force=True)
 
-final_updates = []
-for row_num, url in sorted(results.items()):
-    if url in placeholder_urls:
-        failed.append(row_num)
-    else:
-        final_updates.append({'range': f'G{row_num}', 'values': [[url]]})
+# مسح أي صور placeholder اتكتبت قبل ما نكتشف إنها متكررة
+bad_written = [f"G{r}" for r, u in written.items() if u in blacklist]
+if bad_written:
+    worksheet.batch_clear(bad_written)
+    for r, u in list(written.items()):
+        if u in blacklist:
+            written.pop(r)
+            failed.append(r)
 
-# الكتابة على دفعات من 50
-for i in range(0, len(final_updates), 50):
-    worksheet.batch_update(final_updates[i:i + 50])
-print(f"\n💾 تم كتابة {len(final_updates)} صورة صحيحة في الشيت.")
+# علامة NO_IMAGE للصفوف الفاشلة — حتى لا يعيد السكربت محاولتها كل 30 دقيقة للأبد
+failed = sorted(set(failed))
+if failed and FAILED_MARKER:
+    marker_updates = [{'range': f'G{r}', 'values': [[FAILED_MARKER]]} for r in failed]
+    for i in range(0, len(marker_updates), 50):
+        worksheet.batch_update(marker_updates[i:i + 50])
 
-if skipped_not_url:
-    print(f"\n⏭️ تم تخطي {skipped_not_url} صف لأن عمود H فيها قيمة مش لينك (زي 'string') — "
-          f"راجع المعادلة اللي بتملأ العمود ده وامسح الصفوف الزائدة من الشيت.")
+good_count = len(written)
+print(f"\n💾 تم كتابة {good_count} صورة صحيحة في الشيت.")
 if failed:
-    print(f"\n❗ Rows with no image: {failed}")
+    print(f"🏷️ تم وضع علامة {FAILED_MARKER} على {len(failed)} صف فاشل: {failed}")
+    print("   (امسح العلامة من خلية G يدويًا لأي صف عايز تعيد محاولته)")
+if skipped_not_url:
+    print(f"⏭️ تم تخطي {skipped_not_url} صف لأن عمود H فيها قيمة مش لينك (زي 'string') — "
+          f"راجع المعادلة اللي بتملأ العمود ده وامسح الصفوف الزائدة من الشيت.")
+if stopped_reason:
+    print(f"⏸️ توقف السكربت مبكرًا ({stopped_reason}) — الصفوف المتبقية ستُعالج في التشغيلة القادمة تلقائيًا.")
 print("🎉 Process Finished.")
