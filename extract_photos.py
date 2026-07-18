@@ -288,7 +288,47 @@ def get_image_via_microlink(link):
     return None
 
 
-# ================= الطبقة 4: Playwright stealth =================
+# ================= الطبقة 3ب: Jina Reader =================
+# مواقع معروف أنها بتحظر IPs الرانرز — نوفر وقت الطبقات اللي عمرها ما هتنجح معاها
+BLOCKED_DOMAINS = ('alibaba.com', 'aliexpress.', '1688.com', 'taobao.com', 'tmall.com')
+
+IMG_URL_RE = re.compile(r'https?://[^\s\)\]"\'<>]+\.(?:jpe?g|png|webp)[^\s\)\]"\'<>]*', re.IGNORECASE)
+ALICDN_KF_RE = re.compile(r'https?://[a-z0-9.]*alicdn\.com/kf/[^\s\)\]"\'<>]+\.(?:jpe?g|png|webp)[^\s\)\]"\'<>]*', re.IGNORECASE)
+
+
+def get_image_via_jina(link):
+    """
+    Jina Reader (r.jina.ai): خدمة مجانية تجلب الصفحة من سيرفراتها وترجعها نصًا —
+    زي Microlink لكن بحدود استخدام أعلى بكثير. ممتازة لعلي بابا والمواقع المحظورة.
+    """
+    try:
+        r = requests.get('https://r.jina.ai/' + link, timeout=40,
+                         headers={'User-Agent': DESKTOP_HEADERS['User-Agent']})
+        if r.status_code != 200:
+            print(f"DEBUG: jina status {r.status_code}")
+            return None
+        text = r.text
+
+        # الأولوية: صور منتجات علي بابا الحقيقية (مسار /kf/)
+        m = ALICDN_KF_RE.search(text)
+        if m:
+            url = normalize_url(m.group(0), link)
+            if looks_like_product_image(url, link):
+                print(f"DEBUG: [jina/kf] {url}")
+                return url
+
+        # أي صورة منتج صالحة في محتوى الصفحة
+        for m in IMG_URL_RE.finditer(text):
+            url = normalize_url(m.group(0), link)
+            if looks_like_product_image(url, link):
+                print(f"DEBUG: [jina] {url}")
+                return url
+    except requests.RequestException as e:
+        print(f"DEBUG: jina failed: {e}")
+    return None
+
+
+
 STEALTH_JS = """
 Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
 window.chrome = window.chrome || { runtime: {} };
@@ -356,24 +396,33 @@ def resolve_image(link, page):
         if url and verify_image(url):
             return url
 
-    # الطبقة 2: requests (عادي ثم موبايل)
-    url = get_image_via_requests(link)
+    blocked = any(d in link for d in BLOCKED_DOMAINS)
+
+    # الطبقة 2: requests — نتخطاها للمواقع المحظورة (بترجع صفحة حظر دايمًا = وقت ضايع)
+    if not blocked:
+        url = get_image_via_requests(link)
+        if url and verify_image(url):
+            return url
+
+    # الطبقة 3أ: Jina Reader (مجاني بحدود عالية — الأنسب لعلي بابا)
+    url = get_image_via_jina(link)
     if url and verify_image(url):
         return url
 
-    # الطبقة 3: Microlink (جلب من سيرفرات خارجية)
+    # الطبقة 3ب: Microlink (احتياطي — الحد المجاني ~50 طلب/يوم)
     url = get_image_via_microlink(link)
     if url and verify_image(url):
         return url
 
-    # الطبقة 4: متصفح stealth
-    try:
-        url = get_image_via_playwright(link, page)
-    except Exception as e:
-        print(f"DEBUG: playwright failed: {e}")
-        url = None
-    if url and verify_image(url):
-        return url
+    # الطبقة 4: متصفح stealth — نتخطاها للمواقع المحظورة (نفس الـ IP المحظور = فشل مضمون)
+    if not blocked:
+        try:
+            url = get_image_via_playwright(link, page)
+        except Exception as e:
+            print(f"DEBUG: playwright failed: {e}")
+            url = None
+        if url and verify_image(url):
+            return url
 
     return None
 
@@ -472,7 +521,8 @@ with sync_playwright() as p:
     page = context.new_page()
 
     processed = 0
-    for idx in range(1, len(data)):
+    # من تحت لفوق: الصفوف الجديدة (آخر الشيت) لها الأولوية وتخلص الأول
+    for idx in range(len(data) - 1, 0, -1):
         # وقف رشيق قبل نفاد الوقت أو تجاوز حد الصفوف — الباقي يتكمّل في التشغيلة الجاية
         if processed >= MAX_ROWS_PER_RUN:
             stopped_reason = f"وصلنا حد {MAX_ROWS_PER_RUN} صف للتشغيلة الواحدة"
