@@ -44,6 +44,14 @@ worksheet = sheet.worksheet("Missing In Form")
 MICROLINK_KEY = os.environ.get("MICROLINK_KEY", "").strip()
 SCRAPERAPI_KEY = os.environ.get("SCRAPERAPI_KEY", "").strip()
 SCRAPINGBEE_KEY = os.environ.get("SCRAPINGBEE_KEY", "").strip()
+JINA_KEY = os.environ.get("JINA_KEY", "").strip()
+
+# تشخيص واضح في أول اللوج: مين شغال بمفتاح ومين لأ — عشان نعرف فورًا لو secret مش واصل
+print("🔑 Layers status: "
+      f"Jina={'KEY ✓' if JINA_KEY else 'free (قد يرفض 403 بدون مفتاح)'} | "
+      f"Microlink={'KEY ✓' if MICROLINK_KEY else 'free 50/day'} | "
+      f"ScraperAPI={'ON ✓' if SCRAPERAPI_KEY else 'OFF — المفتاح مش واصل!'} | "
+      f"ScrapingBee={'ON ✓' if SCRAPINGBEE_KEY else 'OFF'}")
 
 DESKTOP_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -357,8 +365,10 @@ def get_image_via_jina(link):
     زي Microlink لكن بحدود استخدام أعلى بكثير. ممتازة لعلي بابا والمواقع المحظورة.
     """
     try:
-        r = requests.get('https://r.jina.ai/' + link, timeout=40,
-                         headers={'User-Agent': DESKTOP_HEADERS['User-Agent']})
+        jina_headers = {'User-Agent': DESKTOP_HEADERS['User-Agent']}
+        if JINA_KEY:
+            jina_headers['Authorization'] = f'Bearer {JINA_KEY}'
+        r = requests.get('https://r.jina.ai/' + link, timeout=40, headers=jina_headers)
         if r.status_code != 200:
             print(f"DEBUG: jina status {r.status_code}")
             return None
