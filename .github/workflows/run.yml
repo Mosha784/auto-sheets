@@ -5,7 +5,7 @@ on:
     - cron: "*/30 * * * *"
   workflow_dispatch:
 
-# منع تشغيلين متداخلين على نفس الشيتات (كان بيسبب كتابة فوق بعض وتكرار صفوف)
+# منع تشغيلين متداخلين على نفس الشيتات (التداخل كان بيسبب كتابة فوق بعض وتكرار صفوف)
 concurrency:
   group: sheets-automation
   cancel-in-progress: false
@@ -13,7 +13,7 @@ concurrency:
 jobs:
   run-python-scripts:
     runs-on: ubuntu-latest
-    timeout-minutes: 25   # حد أقصى للـ job كله بدل ما يعلّق ساعات
+    timeout-minutes: 25   # حد أقصى للـ job كله بدل ما يعلّق ساعات وياكل دقائق GitHub Actions
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
@@ -26,7 +26,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install gspread oauth2client playwright requests google-api-python-client google-auth google-auth-oauthlib google-auth-httplib2 selenium webdriver-manager
+          pip install gspread oauth2client playwright requests google-api-python-client google-auth google-auth-oauthlib google-auth-httplib2
           # --with-deps بيثبت مكتبات النظام المطلوبة للكروميوم على الرانر
           python -m playwright install --with-deps chromium
 
@@ -38,9 +38,14 @@ jobs:
 
       - name: Run Extract Photos script
         timeout-minutes: 12
+        env:
+          # اختياري: مفتاح Microlink لرفع حد الطلبات اليومية
+          # (السكربت شغال من غيره لكن بالحد المجاني المحدود)
+          MICROLINK_KEY: ${{ secrets.MICROLINK_KEY }}
         run: python extract_photos.py
 
-      # if: !cancelled() = الخطوة تشتغل حتى لو خطوة السكرابينج اللي قبلها وقعت
+      # if: !cancelled() = الخطوة تشتغل حتى لو خطوة قبلها وقعت
+      # (عشان فشل السكرابينج ما يوقفش باقي السكربتات اللي ملهاش علاقة بيه)
       - name: Run Copy Image Address script
         if: ${{ !cancelled() }}
         timeout-minutes: 8
