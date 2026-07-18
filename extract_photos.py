@@ -42,6 +42,8 @@ sheet = client.open_by_url("https://docs.google.com/spreadsheets/d/1YFdOAR04ORhS
 worksheet = sheet.worksheet("Missing In Form")
 
 MICROLINK_KEY = os.environ.get("MICROLINK_KEY", "").strip()
+SCRAPERAPI_KEY = os.environ.get("SCRAPERAPI_KEY", "").strip()
+SCRAPINGBEE_KEY = os.environ.get("SCRAPINGBEE_KEY", "").strip()
 
 DESKTOP_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -288,6 +290,59 @@ def get_image_via_microlink(link):
     return None
 
 
+# ================= الطبقة 3ج: ScraperAPI (يتفعّل فقط لو المفتاح موجود) =================
+def get_image_via_scraperapi(link):
+    """
+    ScraperAPI: بروكسيات دوّارة + تخطي أنظمة الحماية — يرجّع HTML الصفحة الحقيقية.
+    مجاني: 1000 كريدت/شهر (+5000 أول أسبوع). يتفعّل فقط عند وجود SCRAPERAPI_KEY.
+    """
+    if not SCRAPERAPI_KEY:
+        return None
+    try:
+        r = requests.get(
+            'https://api.scraperapi.com/',
+            params={'api_key': SCRAPERAPI_KEY, 'url': link},
+            timeout=70,  # الخدمة نفسها ممكن تاخد وقت في المواقع الصعبة
+        )
+        if r.status_code != 200:
+            print(f"DEBUG: scraperapi status {r.status_code}")
+            return None
+        url, how = extract_from_html(r.text, link)
+        if url:
+            print(f"DEBUG: [scraperapi/{how}] {url}")
+        return url
+    except requests.RequestException as e:
+        print(f"DEBUG: scraperapi failed: {e}")
+        return None
+
+
+# ================= الطبقة 3د: ScrapingBee (يتفعّل فقط لو المفتاح موجود) =================
+def get_image_via_scrapingbee(link):
+    """
+    ScrapingBee: نفس فكرة ScraperAPI — بروكسيات + تخطي حماية.
+    مجاني: 1000 كريدت تجريبية لمرة واحدة. يتفعّل فقط عند وجود SCRAPINGBEE_KEY.
+    render_js=false لتوفير الكريدت (الرندر بيستهلك 5 أضعاف).
+    """
+    if not SCRAPINGBEE_KEY:
+        return None
+    try:
+        r = requests.get(
+            'https://app.scrapingbee.com/api/v1/',
+            params={'api_key': SCRAPINGBEE_KEY, 'url': link, 'render_js': 'false'},
+            timeout=70,
+        )
+        if r.status_code != 200:
+            print(f"DEBUG: scrapingbee status {r.status_code}")
+            return None
+        url, how = extract_from_html(r.text, link)
+        if url:
+            print(f"DEBUG: [scrapingbee/{how}] {url}")
+        return url
+    except requests.RequestException as e:
+        print(f"DEBUG: scrapingbee failed: {e}")
+        return None
+
+
 # ================= الطبقة 3ب: Jina Reader =================
 # مواقع معروف أنها بتحظر IPs الرانرز — نوفر وقت الطبقات اللي عمرها ما هتنجح معاها
 BLOCKED_DOMAINS = ('alibaba.com', 'aliexpress.', '1688.com', 'taobao.com', 'tmall.com')
@@ -411,6 +466,16 @@ def resolve_image(link, page):
 
     # الطبقة 3ب: Microlink (احتياطي — الحد المجاني ~50 طلب/يوم)
     url = get_image_via_microlink(link)
+    if url and verify_image(url):
+        return url
+
+    # الطبقة 3ج: ScraperAPI (لو المفتاح موجود — بروكسيات تتخطى الحظر)
+    url = get_image_via_scraperapi(link)
+    if url and verify_image(url):
+        return url
+
+    # الطبقة 3د: ScrapingBee (لو المفتاح موجود — احتياطي أخير قبل المتصفح)
+    url = get_image_via_scrapingbee(link)
     if url and verify_image(url):
         return url
 
