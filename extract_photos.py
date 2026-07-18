@@ -24,6 +24,7 @@ import json
 import os
 import re
 import time
+from collections import Counter
 
 import requests
 import gspread
@@ -132,6 +133,13 @@ def looks_like_product_image(url, base_link=""):
     if low.endswith('.svg'):
         return False
     if 'noon' in (base_link or '') and 'default' in low:
+        return False
+    # علي بابا: ملفات tps هي رسومات الموقع نفسه (زي رسمة الفيشة واليد) وليست منتجات
+    if 'alicdn' in low and ('tps-' in low or '/tps/' in low):
+        return False
+    # صور منتجات علي بابا / علي إكسبريس الحقيقية تكون دائمًا تحت مسار /kf/
+    if ('alibaba.com' in (base_link or '') or 'aliexpress' in (base_link or '')) \
+            and 'alicdn' in low and '/kf/' not in low:
         return False
     return True
 
@@ -374,23 +382,35 @@ def resolve_image(link, page):
 print("🔍 Extracting images for all empty G with link in H ...")
 data = worksheet.get_all_values()
 
-pending_updates = []
+
+def is_known_placeholder(url):
+    """الصور اللي اتكتبت غلط في تشغيلات سابقة (رسومات علي بابا tps)"""
+    low = (url or '').lower()
+    return 'alicdn' in low and ('tps-' in low or '/tps/' in low)
 
 
-def queue_update(row_num, url):
-    pending_updates.append({'range': f'G{row_num}', 'values': [[url]]})
-    if len(pending_updates) >= 10:
-        flush_updates()
+# تنضيف تلقائي: مسح خلايا G اللي فيها placeholder من تشغيلات سابقة
+# حتى تتم إعادة سحب الصورة الصحيحة لها في نفس هذا التشغيل
+cleanup_ranges = []
+for idx in range(1, len(data)):
+    g_val = cell(data[idx], 6).strip()
+    if g_val and is_known_placeholder(g_val):
+        cleanup_ranges.append(f"G{idx+1}")
+        data[idx][6] = ''  # تعتبر فاضية محليًا فتدخل حلقة الاستخراج
+if cleanup_ranges:
+    worksheet.batch_clear(cleanup_ranges)
+    print(f"🧹 Cleared {len(cleanup_ranges)} placeholder cells in G (alicdn tps) — will re-fetch them now.")
+
+results = {}  # row_num -> img_url — الكتابة تتم في الآخر بعد فلترة المتكرر
 
 
-def flush_updates():
-    global pending_updates
-    if pending_updates:
-        worksheet.batch_update(pending_updates)
-        pending_updates = []
+def is_probable_url(link):
+    """التحقق أن القيمة لينك فعلًا قبل أي معالجة — قيم زي كلمة 'string' تتخطى فورًا"""
+    return bool(re.match(r'^https?://\S+\.\S+', link))
 
 
 failed = []
+skipped_not_url = 0
 
 with sync_playwright() as p:
     browser = p.chromium.launch(
@@ -415,11 +435,21 @@ with sync_playwright() as p:
         if img_g.strip() or not link:
             continue
 
+        # إصلاح اللينكات المكتوبة بدون بروتوكول (www.site.com)
+        if link.startswith('www.'):
+            link = 'https://' + link
+
+        # تخطي فوري لأي قيمة مش لينك (زي كلمة "string" الناتجة عن معادلة)
+        # بدل إضاعة دقيقة كاملة على كل صف في تجربة الطبقات الأربعة
+        if not is_probable_url(link):
+            skipped_not_url += 1
+            continue
+
         print(f"🌐 Row {idx+1}: {link[:60]}")
         try:
             img_url = resolve_image(link, page)
             if img_url:
-                queue_update(idx + 1, img_url)
+                results[idx + 1] = img_url
                 print(f"✅ Row {idx+1}: {img_url}")
             else:
                 failed.append(idx + 1)
@@ -432,8 +462,31 @@ with sync_playwright() as p:
 
     browser.close()
 
-flush_updates()
+# ============ فلترة الـ placeholders قبل الكتابة ============
+# لو نفس رابط الصورة رجع لأكتر من صفين مختلفين، فهو صورة صفحة حظر/خطأ
+# وليس صورة منتج (منتجات مختلفة مستحيل يكون لها نفس الصورة بالظبط)
+counts = Counter(results.values())
+placeholder_urls = {u for u, c in counts.items() if c >= 3}
+if placeholder_urls:
+    print(f"\n🚫 استبعاد {len(placeholder_urls)} رابط صورة متكرر لعدة صفوف مختلفة (placeholder وليس منتج):")
+    for u in placeholder_urls:
+        print(f"   {u[:90]}")
 
+final_updates = []
+for row_num, url in sorted(results.items()):
+    if url in placeholder_urls:
+        failed.append(row_num)
+    else:
+        final_updates.append({'range': f'G{row_num}', 'values': [[url]]})
+
+# الكتابة على دفعات من 50
+for i in range(0, len(final_updates), 50):
+    worksheet.batch_update(final_updates[i:i + 50])
+print(f"\n💾 تم كتابة {len(final_updates)} صورة صحيحة في الشيت.")
+
+if skipped_not_url:
+    print(f"\n⏭️ تم تخطي {skipped_not_url} صف لأن عمود H فيها قيمة مش لينك (زي 'string') — "
+          f"راجع المعادلة اللي بتملأ العمود ده وامسح الصفوف الزائدة من الشيت.")
 if failed:
     print(f"\n❗ Rows with no image: {failed}")
 print("🎉 Process Finished.")
