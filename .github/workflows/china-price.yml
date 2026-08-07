@@ -19,6 +19,6 @@ jobs:
       - name: run
         env:
           SHEET_URL: ${{ secrets.SHEET_URL }}
-          SA_JSON: ${{ secrets.SA_JSON }}
+          SA_JSON: ${{ secrets.SERVICE_ACCOUNT_JSON }}
           PROXY_SERVER: ${{ secrets.PROXY_SERVER }}
         run: xvfb-run -a python bot.py
