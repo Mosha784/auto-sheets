@@ -1,0 +1,24 @@
+name: china-price-bot
+on:
+  schedule:
+    - cron: "0 7 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  bot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: deps
+        run: |
+          pip install playwright gspread==5.12.4 requests
+          python -m playwright install --with-deps chromium
+      - name: run
+        env:
+          SHEET_URL: ${{ secrets.SHEET_URL }}
+          SA_JSON: ${{ secrets.SA_JSON }}
+          PROXY_SERVER: ${{ secrets.PROXY_SERVER }}
+        run: xvfb-run -a python bot.py
