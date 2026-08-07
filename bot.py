@@ -245,10 +245,12 @@ def main():
     if start >= total: start = 0
     updates = []; i = start
     with sync_playwright() as p:
-        kw = dict(headless=False, viewport={"width": 1366, "height": 900}, locale="zh-CN",
-                  user_agent=UAH["User-Agent"], args=["--disable-blink-features=AutomationControlled"])
-        if PROXY: kw["proxy"] = {"server": PROXY}
-        ctx = p.chromium.launch(**kw)
+              browser = p.chromium.launch(headless=False,
+                                    args=["--disable-blink-features=AutomationControlled"])
+        ctx_kw = dict(viewport={"width": 1366, "height": 900}, locale="zh-CN",
+                      user_agent=UAH["User-Agent"])
+        if PROXY: ctx_kw["proxy"] = {"server": PROXY}
+        ctx = browser.new_context(**ctx_kw)
         while i < total and time.time() - t0 < BUDGET:
             img = str(cellv(i, C["img"])).strip()
             if img:
