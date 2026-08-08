@@ -132,26 +132,37 @@ def download(url, path):
             pass
     return False
 
+def is_captcha(page):
+    t = page.title().lower()
+    return ("captcha" in t) or ("verification" in t) or ("验证码" in t)
+
 def image_search(ctx, img_path, img_url, site):
     page = ctx.new_page()
     bucket = []
     page.on("response", make_hook(bucket))
     cands = []
     proxied = "https://wsrv.nl/?url=" + requests.utils.quote(img_url, safe="")
+    q = requests.utils.quote(proxied, safe="")
     try:
         if site == "alibaba":
             page.goto("https://www.alibaba.com/", wait_until="domcontentloaded", timeout=60000)
-            page.wait_for_timeout(4000)
-            page.goto("https://www.alibaba.com/trade/search?tab=imageSearch&imageAddress=" + requests.utils.quote(proxied, safe=""), wait_until="domcontentloaded", timeout=60000)
+            page.wait_for_timeout(random.uniform(3000, 5000))
+            surl = "https://www.alibaba.com/trade/search?tab=imageSearch&imageAddress=" + q
+            page.goto(surl, wait_until="domcontentloaded", timeout=60000)
             page.wait_for_timeout(8000)
-            print("alibaba anchors page:", page.title()[:40])
+            if is_captcha(page):
+                print("alibaba captcha - waiting & retrying")
+                page.wait_for_timeout(20000)
+                page.goto(surl, wait_until="domcontentloaded", timeout=60000)
+                page.wait_for_timeout(8000)
             cands = dedupe(bucket) or dom(page, "product-detail")
         elif site == "1688":
             page.goto("https://www.1688.com/", wait_until="domcontentloaded", timeout=45000)
             page.wait_for_timeout(4000)
-            page.goto("https://s.1688.com/youyuan/index.htm?tab=imageSearch&imageAddress=" + requests.utils.quote(proxied, safe=""), wait_until="domcontentloaded", timeout=45000)
+            page.goto("https://s.1688.com/youyuan/index.htm?tab=imageSearch&imageAddress=" + q, wait_until="domcontentloaded", timeout=45000)
             page.wait_for_timeout(8000)
-            cands = dedupe(bucket) or dom(page, "offer")
+            if "youyuan" in page.url:
+                cands = dedupe(bucket) or dom(page, "detail.1688.com")
             if not cands:
                 page.goto("https://www.1688.com/", wait_until="domcontentloaded", timeout=45000)
                 page.wait_for_timeout(3000)
@@ -160,10 +171,11 @@ def image_search(ctx, img_path, img_url, site):
                 page.wait_for_timeout(4000)
                 try:
                     page.click("text=搜索图片", timeout=8000)
+                    page.wait_for_timeout(10000)
                 except Exception:
                     pass
-                page.wait_for_timeout(10000)
-                cands = dedupe(bucket) or dom(page, "offer")
+                if "youyuan" in page.url or "imageSearch" in page.url:
+                    cands = dedupe(bucket) or dom(page, "detail.1688.com")
     except Exception as e:
         print(site, "search err:", str(e)[:120])
     page.close()
@@ -219,18 +231,12 @@ def put(updates, r, c, v):
         updates.append((r, c, v))
 
 def flush(updates):
-    if not updates:
-        return
-    try:
-        data = [{"range": "'%s'!%s%d" % (ws.title, cl(c), r), "values": [[v]]} for r, c, v in updates]
-        sh.values_batch_update({"data": data})
-    except Exception as e:
-        print("batch err:", str(e)[:100])
-        for r, c, v in updates:
-            try:
-                ws.update_cell(r, c, v)
-            except Exception:
-                pass
+    for r, c, v in updates:
+        try:
+            ws.update_cell(r, c, v)
+        except Exception as e:
+            print("cell err:", str(e)[:60])
+        time.sleep(0.2)
 
 def process(i, img, updates, ctx):
     r = i + 2
@@ -315,6 +321,7 @@ def main():
                     print("row err:", str(e)[:100])
                 flush(updates)
                 updates = []
+                time.sleep(random.uniform(5, 9))
             else:
                 time.sleep(10)
         ctx.close()
