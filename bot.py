@@ -132,49 +132,38 @@ def download(url, path):
             pass
     return False
 
-def image_search(ctx, img_path, site):
+def image_search(ctx, img_path, img_url, site):
     page = ctx.new_page()
     bucket = []
     page.on("response", make_hook(bucket))
     cands = []
+    proxied = "https://wsrv.nl/?url=" + requests.utils.quote(img_url, safe="")
     try:
         if site == "alibaba":
             page.goto("https://www.alibaba.com/", wait_until="domcontentloaded", timeout=60000)
             page.wait_for_timeout(4000)
-            done_set = False
-            try:
-                page.click("div[data-search='switch-image-upload']", timeout=6000)
-                page.wait_for_timeout(2000)
-                page.set_input_files("input[name='image-search-upload']", img_path)
-                done_set = True
-            except Exception:
-                pass
-            if not done_set:
-                try:
-                    page.set_input_files("#img-search-upload", img_path)
-                    done_set = True
-                    try:
-                        page.click("text=搜索图片", timeout=6000)
-                    except Exception:
-                        pass
-                except Exception as e:
-                    print("alibaba set err:", str(e)[:80])
-            if done_set:
-                print("alibaba file set OK")
-                page.wait_for_timeout(10000)
+            page.goto("https://www.alibaba.com/trade/search?tab=imageSearch&imageAddress=" + requests.utils.quote(proxied, safe=""), wait_until="domcontentloaded", timeout=60000)
+            page.wait_for_timeout(8000)
+            print("alibaba anchors page:", page.title()[:40])
             cands = dedupe(bucket) or dom(page, "product-detail")
         elif site == "1688":
             page.goto("https://www.1688.com/", wait_until="domcontentloaded", timeout=45000)
-            page.wait_for_timeout(3000)
-            page.set_input_files("#img-search-upload", img_path)
-            print("1688 file set OK")
             page.wait_for_timeout(4000)
-            try:
-                page.click("text=搜索图片", timeout=10000)
-            except Exception as e:
-                print("1688 btn err:", str(e)[:60])
-            page.wait_for_timeout(12000)
-            cands = dedupe(bucket) or dom(page, "detail.1688.com")
+            page.goto("https://s.1688.com/youyuan/index.htm?tab=imageSearch&imageAddress=" + requests.utils.quote(proxied, safe=""), wait_until="domcontentloaded", timeout=45000)
+            page.wait_for_timeout(8000)
+            cands = dedupe(bucket) or dom(page, "offer")
+            if not cands:
+                page.goto("https://www.1688.com/", wait_until="domcontentloaded", timeout=45000)
+                page.wait_for_timeout(3000)
+                page.set_input_files("#img-search-upload", img_path)
+                print("1688 file set OK")
+                page.wait_for_timeout(4000)
+                try:
+                    page.click("text=搜索图片", timeout=8000)
+                except Exception:
+                    pass
+                page.wait_for_timeout(10000)
+                cands = dedupe(bucket) or dom(page, "offer")
     except Exception as e:
         print(site, "search err:", str(e)[:120])
     page.close()
@@ -252,7 +241,7 @@ def process(i, img, updates, ctx):
     dims = None
     ali_aed = None
     cn_aed = None
-    ali = image_search(ctx, path, "alibaba")
+    ali = image_search(ctx, path, img, "alibaba")
     if ali:
         put(updates, r, C["ali_link"], ali[0]["url"])
         info = scrape_alibaba(ctx, ali[0]["url"])
@@ -266,7 +255,7 @@ def process(i, img, updates, ctx):
             put(updates, r, C["H"], dims[2])
         if info.get("weight"):
             put(updates, r, C["WT"], info["weight"])
-    cn = image_search(ctx, path, "1688")
+    cn = image_search(ctx, path, img, "1688")
     if cn:
         put(updates, r, C["cn_link"], cn[0]["url"])
         info = scrape_1688(ctx, cn[0]["url"])
