@@ -53,18 +53,6 @@ for name in ["Alibaba Landed (AED)", "16888 Landed (AED)"]:
 
 C = {"img": col("product link"), "ali_price": col("alibaba", "price"), "cn_price": col("1688", "price"), "L": col("length"), "W": col("width"), "H": col("height"), "WT": col("weight"), "items": col("items per carton"), "cbm": col("cbm"), "ali_link": col("alibaba", "link"), "ali_photo": col("alibaba", "photo"), "cn_link": col("1688", "link"), "cn_photo": col("1688", "product"), "land_ali": col("alibaba", "landed"), "land_cn": col("1688", "landed")}
 
-try:
-    meta = sh.worksheet("meta")
-except gspread.WorksheetNotFound:
-    meta = sh.add_worksheet("meta", rows=5, cols=2)
-
-def progress():
-    v = meta.acell("A1").value
-    return int(v) if v and str(v).isdigit() else 0
-
-def set_progress(n):
-    meta.update_acell("A1", str(n))
-
 def walk(node, out, depth=0):
     if depth > 8 or len(out) > 300:
         return
@@ -144,9 +132,6 @@ def download(url, path):
             pass
     return False
 
-def blocked(title):
-    return any(k in title.lower() for k in ("captcha", "verify", "verification", "access denied", "punish"))
-
 def image_search(ctx, img_path, site):
     page = ctx.new_page()
     bucket = []
@@ -155,29 +140,40 @@ def image_search(ctx, img_path, site):
     try:
         if site == "alibaba":
             page.goto("https://www.alibaba.com/", wait_until="domcontentloaded", timeout=60000)
-            page.wait_for_timeout(3000)
-            if blocked(page.title()):
-                print("alibaba: blocked page")
+            page.wait_for_timeout(4000)
+            done_set = False
             try:
-                page.click("div[data-search='switch-image-upload']", timeout=8000)
+                page.click("div[data-search='switch-image-upload']", timeout=6000)
+                page.wait_for_timeout(2000)
+                page.set_input_files("input[name='image-search-upload']", img_path)
+                done_set = True
             except Exception:
-                page.click("[aria-label='Image search']", timeout=4000)
-            page.wait_for_timeout(2000)
-            page.set_input_files("input[name='image-search-upload']", img_path)
-            print("alibaba file set OK")
-            page.wait_for_timeout(9000)
+                pass
+            if not done_set:
+                try:
+                    page.set_input_files("#img-search-upload", img_path)
+                    done_set = True
+                    try:
+                        page.click("text=搜索图片", timeout=6000)
+                    except Exception:
+                        pass
+                except Exception as e:
+                    print("alibaba set err:", str(e)[:80])
+            if done_set:
+                print("alibaba file set OK")
+                page.wait_for_timeout(10000)
             cands = dedupe(bucket) or dom(page, "product-detail")
         elif site == "1688":
             page.goto("https://www.1688.com/", wait_until="domcontentloaded", timeout=45000)
             page.wait_for_timeout(3000)
             page.set_input_files("#img-search-upload", img_path)
             print("1688 file set OK")
-            page.wait_for_timeout(3000)
+            page.wait_for_timeout(4000)
             try:
-                page.click("text=搜索图片", timeout=5000)
+                page.click("text=搜索图片", timeout=10000)
             except Exception as e:
-                print("1688 search btn err:", str(e)[:60])
-            page.wait_for_timeout(8000)
+                print("1688 btn err:", str(e)[:60])
+            page.wait_for_timeout(12000)
             cands = dedupe(bucket) or dom(page, "detail.1688.com")
     except Exception as e:
         print(site, "search err:", str(e)[:120])
@@ -295,36 +291,46 @@ def process(i, img, updates, ctx):
             put(updates, r, C["land_cn"], round(cn_aed + ship, 2))
 
 def main():
+    global grid
     t0 = time.time()
-    total = len(grid) - 1
     if C["img"] < 0:
         print("no Product Link column!")
         return
-    start = progress()
-    if start >= total:
-        start = 0
     updates = []
-    i = start
+    tried = set()
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=False, args=["--disable-blink-features=AutomationControlled"])
-        ctx_kw = {"viewport": {"width": 1366, "height": 900}, "locale": "zh-CN", "user_agent": UAH["User-Agent"]}
+        ctx_kw = {"viewport": {"width": 1366, "height": 900}, "locale": "en-US", "user_agent": UAH["User-Agent"]}
         if PROXY:
             ctx_kw["proxy"] = {"server": PROXY}
         ctx = browser.new_context(**ctx_kw)
-        while i < total and time.time() - t0 < BUDGET:
-            img = str(cellv(i, C["img"])).strip()
-            print("=== row", i + 2, "===")
-            if img:
+        last_refresh = 0
+        while time.time() - t0 < BUDGET:
+            if time.time() - last_refresh > 30:
+                grid = ws.get_all_values()
+                last_refresh = time.time()
+            pending = []
+            for i in range(1, len(grid)):
+                row = grid[i]
+                img = str(row[C["img"]]).strip() if C["img"] < len(row) else ""
+                ali = str(row[C["ali_link"]]).strip() if C["ali_link"] >= 0 and C["ali_link"] < len(row) else ""
+                if img and not ali and i not in tried:
+                    pending.append(i)
+            if pending:
+                i = pending[0]
+                tried.add(i)
+                print("=== new row", i + 2, "===")
                 try:
-                    process(i, img, updates, ctx)
+                    process(i, str(grid[i][C["img"]]).strip(), updates, ctx)
                 except Exception as e:
                     print("row err:", str(e)[:100])
-            i += 1
-            set_progress(i)
-            time.sleep(random.uniform(2, 4))
+                flush(updates)
+                updates = []
+            else:
+                time.sleep(10)
         ctx.close()
         browser.close()
     flush(updates)
-    print("done row", i, "of", total)
+    print("watcher done")
 
 main()
