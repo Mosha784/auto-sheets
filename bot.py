@@ -10,6 +10,7 @@ open("sa.json", "w").write(os.environ["SA_JSON"])
 USD_AED = float(os.environ.get("USD_AED", "3.67"))
 CNY_AED = float(os.environ.get("CNY_AED", "0.51"))
 PROXY = os.environ.get("PROXY_SERVER", "").strip()
+SCRAPER_KEY = os.environ.get("SCRAPERAPI_KEY", "").strip()
 BUDGET = int(os.environ.get("TIME_BUDGET_MIN", "30")) * 60
 
 gc = gspread.service_account("sa.json")
@@ -162,6 +163,9 @@ def download(url, path):
             pass
     return False
 
+def blocked(title):
+    return any(k in title.lower() for k in ("captcha", "verify", "verification", "access denied", "punish"))
+
 def image_search(ctx, img_path, site):
     page = ctx.new_page()
     bucket = []
@@ -171,7 +175,12 @@ def image_search(ctx, img_path, site):
         if site == "alibaba":
             page.goto("https://www.alibaba.com/", wait_until="domcontentloaded", timeout=60000)
             page.wait_for_timeout(3000)
-            if upload(page, img_path, ["[class*='camera']", "[class*='image-search']", "[class*='img-search']", "form [class*='icon']"]):
+            print("alibaba title:", page.title()[:60])
+            if blocked(page.title()):
+                print("alibaba: صفحة محجوبة/CAPTCHA")
+            ok = upload(page, img_path, ["[class*='camera']", "[class*='image-search']", "[class*='img-search']", "form [class*='icon']", "[aria-label*='image']", "img[src*='camera']"])
+            print("alibaba upload ok:", ok)
+            if ok:
                 page.wait_for_timeout(9000)
             cands = dedupe(bucket) or dom(page, "product-detail")
         elif site == "1688":
@@ -181,7 +190,9 @@ def image_search(ctx, img_path, site):
                 print("1688: needs login - skipped")
                 page.close()
                 return []
-            if upload(page, img_path, ["[class*='upload']", "[class*='camera']", "[class*='photo']"]):
+            ok = upload(page, img_path, ["[class*='upload']", "[class*='camera']", "[class*='photo']"])
+            print("1688 upload ok:", ok)
+            if ok:
                 page.wait_for_timeout(9000)
             cands = dedupe(bucket) or dom(page, "detail.1688.com")
     except Exception as e:
@@ -275,8 +286,6 @@ def process(i, img, updates, ctx):
             put(updates, r, C["H"], dims[2])
         if info.get("weight"):
             put(updates, r, C["WT"], info["weight"])
-    else:
-        print("alibaba: no results (maybe CAPTCHA)")
     cn = image_search(ctx, path, "1688")
     if cn:
         put(updates, r, C["cn_link"], cn[0]["url"])
@@ -317,6 +326,9 @@ def main():
         ctx_kw = {"viewport": {"width": 1366, "height": 900}, "locale": "zh-CN", "user_agent": UAH["User-Agent"]}
         if PROXY:
             ctx_kw["proxy"] = {"server": PROXY}
+        elif SCRAPER_KEY:
+            ctx_kw["proxy"] = {"server": "http://proxy.scraperapi.com:8001", "username": "scraperapi", "password": SCRAPER_KEY}
+            print("using ScraperAPI proxy")
         ctx = browser.new_context(**ctx_kw)
         while i < total and time.time() - t0 < BUDGET:
             img = str(cellv(i, C["img"])).strip()
