@@ -142,6 +142,17 @@ def upload(page, img_path, sels):
             return True
     except Exception:
         pass
+    try:
+        clicked = page.evaluate("() => { const els = Array.from(document.querySelectorAll('button, div, span, i, img, a, svg')); const el = els.find(e => { const c = (e.className && e.className.baseVal !== undefined) ? e.className.baseVal : (e.className || ''); const s = (c + ' ' + (e.id || '') + ' ' + (e.getAttribute('aria-label') || '') + ' ' + (e.getAttribute('title') || '')).toLowerCase(); return /camera|image[- ]?search|img[- ]?search|photo|picture/.test(s); }); if (el) { el.click(); return true; } return false; }")
+        print("generic click:", clicked)
+        if clicked:
+            page.wait_for_timeout(2000)
+            inp = page.query_selector("input[type=file]")
+            if inp:
+                inp.set_input_files(img_path)
+                return True
+    except Exception as e:
+        print("generic click err:", str(e)[:80])
     for s in sels:
         try:
             with page.expect_file_chooser(timeout=4000) as fc:
@@ -150,6 +161,11 @@ def upload(page, img_path, sels):
             return True
         except Exception:
             continue
+    try:
+        h = page.evaluate("() => (document.querySelector('header') || document.body).outerHTML.slice(0, 3000)")
+        print("PAGE HTML SAMPLE:", h.replace("\n", " ")[:1500])
+    except Exception:
+        pass
     return False
 
 def download(url, path):
@@ -177,7 +193,7 @@ def image_search(ctx, img_path, site):
             page.wait_for_timeout(3000)
             print("alibaba title:", page.title()[:60])
             if blocked(page.title()):
-                print("alibaba: صفحة محجوبة/CAPTCHA")
+                print("alibaba: blocked page")
             ok = upload(page, img_path, ["[class*='camera']", "[class*='image-search']", "[class*='img-search']", "form [class*='icon']", "[aria-label*='image']", "img[src*='camera']"])
             print("alibaba upload ok:", ok)
             if ok:
