@@ -10,7 +10,6 @@ open("sa.json", "w").write(os.environ["SA_JSON"])
 USD_AED = float(os.environ.get("USD_AED", "3.67"))
 CNY_AED = float(os.environ.get("CNY_AED", "0.51"))
 PROXY = os.environ.get("PROXY_SERVER", "").strip()
-SCRAPER_KEY = os.environ.get("SCRAPERAPI_KEY", "").strip()
 BUDGET = int(os.environ.get("TIME_BUDGET_MIN", "30")) * 60
 
 gc = gspread.service_account("sa.json")
@@ -134,45 +133,6 @@ def dom(page, hint):
         pass
     return out
 
-def upload(page, img_path, sels):
-    try:
-        inp = page.query_selector("input[type=file]")
-        if inp:
-            inp.set_input_files(img_path)
-            return True
-    except Exception:
-        pass
-    try:
-        page.evaluate("() => { const els = Array.from(document.querySelectorAll('button, div, span, i, img, a, svg')); const el = els.find(e => { const c = (e.className && e.className.baseVal !== undefined) ? e.className.baseVal : (e.className || ''); const s = (c + ' ' + (e.id || '') + ' ' + (e.getAttribute('aria-label') || '') + ' ' + (e.getAttribute('title') || '')).toLowerCase(); return /camera|image[- ]?search|img[- ]?search|photo|picture/.test(s); }); if (el) el.click(); }")
-        page.wait_for_timeout(2500)
-        inp = page.query_selector("input[type=file]")
-        if inp:
-            inp.set_input_files(img_path)
-            return True
-    except Exception as e:
-        print("generic click err:", str(e)[:80])
-    try:
-        handle = page.evaluate_handle("() => { const scope = document.querySelector('form') || document.querySelector('[class*=search]') || document.querySelector('header') || document.body; return Array.from(scope.querySelectorAll('button, [role=button], div, span, i, img, svg, a')).filter(e => { const r = e.getBoundingClientRect(); return r.width > 8 && r.width < 90 && r.height > 8 && r.height < 90; }).slice(0, 15); }")
-        count = page.evaluate("els => els.length", handle)
-        print("brute candidates:", count)
-        for idx in range(count):
-            try:
-                with page.expect_file_chooser(timeout=2000) as fc:
-                    page.evaluate("(els, i) => els[i].click()", [handle, idx])
-                fc.value.set_files(img_path)
-                print("brute force hit at", idx)
-                return True
-            except Exception:
-                continue
-    except Exception as e:
-        print("brute err:", str(e)[:80])
-    try:
-        h = page.evaluate("() => { const f = document.querySelector('form'); return f ? f.outerHTML : document.body.innerHTML.slice(0, 2000); }")
-        print("FORM HTML:", h.replace("\n", " ")[:2000])
-    except Exception:
-        pass
-    return False
-
 def download(url, path):
     for u in (url, "https://wsrv.nl/?url=" + requests.utils.quote(url, safe="")):
         try:
@@ -198,25 +158,29 @@ def image_search(ctx, img_path, site):
             page.wait_for_timeout(3000)
             if blocked(page.title()):
                 print("alibaba: blocked page")
-            ok = upload(page, img_path, ["[class*='camera']", "[class*='image-search']", "[class*='img-search']", "form [class*='icon']"])
-            print("alibaba upload ok:", ok)
-            if ok:
-                page.wait_for_timeout(9000)
+            try:
+                page.click("div[data-search='switch-image-upload']", timeout=8000)
+            except Exception:
+                page.click("[aria-label='Image search']", timeout=4000)
+            page.wait_for_timeout(2000)
+            page.set_input_files("input[name='image-search-upload']", img_path)
+            print("alibaba file set OK")
+            page.wait_for_timeout(9000)
             cands = dedupe(bucket) or dom(page, "product-detail")
         elif site == "1688":
-            page.goto("https://s.1688.com/youyuan/index.htm?tab=imageSearch", wait_until="domcontentloaded", timeout=30000)
+            page.goto("https://www.1688.com/", wait_until="domcontentloaded", timeout=45000)
             page.wait_for_timeout(3000)
-            if "login" in page.url or "passport" in page.url:
-                print("1688: needs login - skipped")
-                page.close()
-                return []
-            ok = upload(page, img_path, ["[class*='upload']", "[class*='camera']", "[class*='photo']"])
-            print("1688 upload ok:", ok)
-            if ok:
-                page.wait_for_timeout(9000)
+            page.set_input_files("#img-search-upload", img_path)
+            print("1688 file set OK")
+            page.wait_for_timeout(3000)
+            try:
+                page.click("text=搜索图片", timeout=5000)
+            except Exception as e:
+                print("1688 search btn err:", str(e)[:60])
+            page.wait_for_timeout(8000)
             cands = dedupe(bucket) or dom(page, "detail.1688.com")
     except Exception as e:
-        print(site, "search err:", str(e)[:100])
+        print(site, "search err:", str(e)[:120])
     page.close()
     return cands[:5]
 
@@ -346,9 +310,6 @@ def main():
         ctx_kw = {"viewport": {"width": 1366, "height": 900}, "locale": "zh-CN", "user_agent": UAH["User-Agent"]}
         if PROXY:
             ctx_kw["proxy"] = {"server": PROXY}
-        elif SCRAPER_KEY:
-            ctx_kw["proxy"] = {"server": "http://proxy.scraperapi.com:8001", "username": "scraperapi", "password": SCRAPER_KEY}
-            print("using ScraperAPI proxy")
         ctx = browser.new_context(**ctx_kw)
         while i < total and time.time() - t0 < BUDGET:
             img = str(cellv(i, C["img"])).strip()
