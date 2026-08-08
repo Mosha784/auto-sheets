@@ -143,27 +143,32 @@ def upload(page, img_path, sels):
     except Exception:
         pass
     try:
-        clicked = page.evaluate("() => { const els = Array.from(document.querySelectorAll('button, div, span, i, img, a, svg')); const el = els.find(e => { const c = (e.className && e.className.baseVal !== undefined) ? e.className.baseVal : (e.className || ''); const s = (c + ' ' + (e.id || '') + ' ' + (e.getAttribute('aria-label') || '') + ' ' + (e.getAttribute('title') || '')).toLowerCase(); return /camera|image[- ]?search|img[- ]?search|photo|picture/.test(s); }); if (el) { el.click(); return true; } return false; }")
-        print("generic click:", clicked)
-        if clicked:
-            page.wait_for_timeout(2000)
-            inp = page.query_selector("input[type=file]")
-            if inp:
-                inp.set_input_files(img_path)
-                return True
+        page.evaluate("() => { const els = Array.from(document.querySelectorAll('button, div, span, i, img, a, svg')); const el = els.find(e => { const c = (e.className && e.className.baseVal !== undefined) ? e.className.baseVal : (e.className || ''); const s = (c + ' ' + (e.id || '') + ' ' + (e.getAttribute('aria-label') || '') + ' ' + (e.getAttribute('title') || '')).toLowerCase(); return /camera|image[- ]?search|img[- ]?search|photo|picture/.test(s); }); if (el) el.click(); }")
+        page.wait_for_timeout(2500)
+        inp = page.query_selector("input[type=file]")
+        if inp:
+            inp.set_input_files(img_path)
+            return True
     except Exception as e:
         print("generic click err:", str(e)[:80])
-    for s in sels:
-        try:
-            with page.expect_file_chooser(timeout=4000) as fc:
-                page.click(s, timeout=4000)
-            fc.value.set_files(img_path)
-            return True
-        except Exception:
-            continue
     try:
-        h = page.evaluate("() => (document.querySelector('header') || document.body).outerHTML.slice(0, 3000)")
-        print("PAGE HTML SAMPLE:", h.replace("\n", " ")[:1500])
+        handle = page.evaluate_handle("() => { const scope = document.querySelector('form') || document.querySelector('[class*=search]') || document.querySelector('header') || document.body; return Array.from(scope.querySelectorAll('button, [role=button], div, span, i, img, svg, a')).filter(e => { const r = e.getBoundingClientRect(); return r.width > 8 && r.width < 90 && r.height > 8 && r.height < 90; }).slice(0, 15); }")
+        count = page.evaluate("els => els.length", handle)
+        print("brute candidates:", count)
+        for idx in range(count):
+            try:
+                with page.expect_file_chooser(timeout=2000) as fc:
+                    page.evaluate("(els, i) => els[i].click()", [handle, idx])
+                fc.value.set_files(img_path)
+                print("brute force hit at", idx)
+                return True
+            except Exception:
+                continue
+    except Exception as e:
+        print("brute err:", str(e)[:80])
+    try:
+        h = page.evaluate("() => { const f = document.querySelector('form'); return f ? f.outerHTML : document.body.innerHTML.slice(0, 2000); }")
+        print("FORM HTML:", h.replace("\n", " ")[:2000])
     except Exception:
         pass
     return False
@@ -191,16 +196,15 @@ def image_search(ctx, img_path, site):
         if site == "alibaba":
             page.goto("https://www.alibaba.com/", wait_until="domcontentloaded", timeout=60000)
             page.wait_for_timeout(3000)
-            print("alibaba title:", page.title()[:60])
             if blocked(page.title()):
                 print("alibaba: blocked page")
-            ok = upload(page, img_path, ["[class*='camera']", "[class*='image-search']", "[class*='img-search']", "form [class*='icon']", "[aria-label*='image']", "img[src*='camera']"])
+            ok = upload(page, img_path, ["[class*='camera']", "[class*='image-search']", "[class*='img-search']", "form [class*='icon']"])
             print("alibaba upload ok:", ok)
             if ok:
                 page.wait_for_timeout(9000)
             cands = dedupe(bucket) or dom(page, "product-detail")
         elif site == "1688":
-            page.goto("https://s.1688.com/youyuan/index.htm?tab=imageSearch", wait_until="domcontentloaded", timeout=60000)
+            page.goto("https://s.1688.com/youyuan/index.htm?tab=imageSearch", wait_until="domcontentloaded", timeout=30000)
             page.wait_for_timeout(3000)
             if "login" in page.url or "passport" in page.url:
                 print("1688: needs login - skipped")
@@ -242,7 +246,7 @@ def scrape_1688(ctx, url):
     info = {}
     page = ctx.new_page()
     try:
-        page.goto(url, wait_until="domcontentloaded", timeout=60000)
+        page.goto(url, wait_until="domcontentloaded", timeout=30000)
         page.wait_for_timeout(5000)
         t = page.inner_text("body")
         prices = [float(p) for p in re.findall(r"¥\s*(\d+(?:\.\d+)?)", t)]
